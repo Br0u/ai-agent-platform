@@ -67,16 +67,18 @@
 
 ### 4.1 资源修订
 
+`download_resources` 新增不可变的 `kind: document | software`。创建资源时必须明确选择类型；资源一旦创建不得切换类型。现有资源全部迁移为 `document`，既有空记录 `mdd2-client` 明确迁移为 `software`。
+
 `download_resource_revisions` 继续保存公开展示与发布状态相关的元数据，并新增：
 
-- `kind`：`document | software`
+- `resource_kind`：冗余保存资源类型，通过 `(resource_id, resource_kind)` 复合外键引用资源表的 `(id, kind)`，保证修订不能改变资源类型
 - `release_version`：软件资源必填，文档资源为空
 
 权限规则按资源类型区分：
 
 - 文档继续使用现有三种组合：公开预览/公开下载、公开预览/联系下载、联系获取。
 - 软件不提供站内预览，`preview_policy` 为空且 `download_policy` 固定为 `public`。
-- 数据库检查约束要求：`document` 的 `release_version` 为空且 `preview_policy` 非空；`software` 的非空版本号符合 `^[A-Za-z0-9][A-Za-z0-9._+-]{0,39}$`，且 `preview_policy` 为空、`download_policy='public'`。
+- 数据库检查约束要求：`document` 的 `release_version` 为空且 `preview_policy` 非空；`software` 的版本号去除首尾空白后长度为 1–40 个字符，且 `preview_policy` 为空、`download_policy='public'`。应用层同时拒绝控制字符。
 
 ### 4.2 通用附件
 
@@ -96,7 +98,7 @@
 - `cover_object_key`：仅 PDF 使用
 - 创建时间
 
-`revision_id + slot` 唯一，保证同一修订中每个平台至多一个文件。附件通过 `(revision_id, revision_kind)` 复合外键引用修订表的 `(id, kind)`，数据库检查约束只允许 `document + document` 或 `software + windows/macos`，从而阻止文档修订持有安装包、软件修订持有 PDF。
+资源表建立 `(id, kind)` 唯一键，修订表建立 `(id, resource_kind)` 唯一键。`revision_id + slot` 唯一，保证同一修订中每个平台至多一个文件。附件通过 `(revision_id, revision_kind)` 复合外键引用修订表的 `(id, resource_kind)`，数据库检查约束只允许 `document + document` 或 `software + windows/macos`，从而阻止文档修订持有安装包、软件修订持有 PDF。
 
 约束规则：
 
@@ -111,8 +113,9 @@
 - 将现有修订中的 PDF、封面、页数、大小和 SHA-256 迁移为 `document` 附件；现有数据库没有原上传文件名，因此迁移时确定性使用 `{resource.key}.pdf`，扩展名写 `.pdf`，媒体类型写 `application/pdf`。
 - 将现有文档修订标记为 `document`。
 - 保留既有 `mdd2-client` 资源身份，管理员为其创建软件草稿并上传安装包。
-- 本次采用维护窗口切换：先停止旧 Web/Nginx 写流量，再执行一次事务性数据库迁移与数据核验，随后部署只读取新表的新代码并恢复流量。旧代码不得在删除 PDF 专用字段后继续运行。
+- 本次采用维护窗口切换：先从入口摘除并停止全部旧 Nginx/Web 流量与进程，确认没有旧代码读取或写入数据库后，再执行一次事务性数据库迁移与数据核验；随后部署只读取新表的新代码，通过健康检查后恢复流量。旧代码不得在删除 PDF 专用字段后继续运行。
 - 数据迁移与新代码切换完成后直接删除废弃的 PDF 专用字段，不保留兼容读取路径；迁移失败则整笔事务回滚并保持旧版本停机状态，不能启动新代码。
+- 迁移生成的 `{resource.key}.pdf` 只作为附件后台原文件名。公开 PDF 下载继续按既有合同使用 `{revision.name}.pdf`，不因附件表迁移改变访客看到的文件名。
 
 ## 5. 上传、存储与发布
 
@@ -157,10 +160,10 @@
 
 - 软件草稿第一次上传任意一个平台文件后进入“待发布”。
 - 另一个平台未上传不阻止发布，后台明确显示该平台“暂无资源”。
-- 已发布资源编辑时复制元数据并复用现有附件引用，不复制大文件。
+- 已发布资源编辑时，新修订复制元数据，并为每个现有槽位创建新的附件元数据行指向同一 PDF、封面或安装包对象键，不复制大文件。
 - 替换某个平台安装包只改变草稿中的对应附件；线上旧版本继续提供下载。
 - 显式发布后，草稿整体成为新的公开版本。
-- 只有确认旧附件不再被发布修订或草稿引用时才能删除物理文件。
+- 清理时分别统计所有附件行对 PDF、WebP 封面和安装包对象键的引用；只有确认旧对象键不再被任何发布修订或草稿附件行引用时才能删除物理文件。
 - 两个平台文件全部移除后，软件草稿不可发布。
 
 ## 6. 后台界面
@@ -172,6 +175,7 @@
 - 上传/替换 PDF
 - PDF 封面、页数、大小与草稿预览
 - 预览和下载权限
+- 公开 PDF 下载文件名继续由资源显示名称生成，不使用迁移产生的后台原文件名
 
 软件资源改为：
 
