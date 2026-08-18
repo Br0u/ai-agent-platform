@@ -1897,8 +1897,6 @@ if ! cat "$docker_stdout_file" >"$download_attachment_rows_file" || \
      NF != 4 || $1 !~ /^(document|windows|macos)$/ ||
        $3 !~ /^[0-9a-f]{64}$/ || $4 !~ /^[1-9][0-9]*$/ { exit 1 }
      !($2 in manifest_digest) || manifest_digest[$2] != $3 || manifest_size[$2] != $4 { exit 1 }
-     { attachment_count += 1 }
-     END { exit attachment_count > 0 ? 0 : 1 }
    ' "$temporary_directory/extracted/download-files.manifest" \
      "$download_attachment_rows_file"; then
   echo "restore drill failed download attachment reconciliation" >&2

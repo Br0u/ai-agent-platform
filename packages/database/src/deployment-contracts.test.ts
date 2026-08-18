@@ -7666,6 +7666,7 @@ case "$command" in
           *"SELECT count(*) FROM public.users"*) printf '%s\n' 1 ;;
           *"SELECT count(*) FROM agno.agno_sessions"*) printf '%s\n' 1 ;;
           *"SELECT count(*) FROM agno.agno_schema_versions"*) printf '%s\n' 1 ;;
+          *"SELECT artifact.slot"*) : ;;
           *"SELECT artifact_key"*) : ;;
           *"to_regclass('public.users')"*) printf '%s\n' t ;;
           *) exit 1 ;;
@@ -9724,7 +9725,7 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
     expect(script).toContain(
       "blocked download mutation changed protected state",
     );
-    expect(script).toContain("download_artifacts=6");
+    expect(script).toContain("download_artifacts=8");
     expect(script).toContain("cleanup_pending_at");
     expect(script).toContain("download-resources/staging");
   });

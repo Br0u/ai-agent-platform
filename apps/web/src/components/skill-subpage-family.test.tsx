@@ -216,8 +216,10 @@ describe("skill subpage family", () => {
           href,
         );
       }
+      expect(
+        screen.queryByRole("link", { name: "申请体验" }),
+      ).not.toBeInTheDocument();
       for (const [name, href] of [
-        ["申请体验", "/trial"],
         ["返回技能中心", "/product/skills"],
       ] as const) {
         const links = screen.getAllByRole("link", { name });

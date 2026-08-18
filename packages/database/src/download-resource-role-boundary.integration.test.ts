@@ -135,16 +135,16 @@ describePostgres(
       try {
         await client.query("BEGIN");
         await client.query(
-          `INSERT INTO download_resources (id, key, admin_label)
-           VALUES ($1, $2, 'Role boundary')`,
+          `INSERT INTO download_resources (id, key, admin_label, kind)
+           VALUES ($1, $2, 'Role boundary', 'document')`,
           [resourceId, `role-boundary-${resourceId}`],
         );
         await client.query(
           `INSERT INTO download_resource_revisions
              (id, resource_id, name, product, category, resource_type,
-              description, sort_order, preview_policy, download_policy)
+              description, resource_kind, sort_order, preview_policy, download_policy)
            VALUES ($1, $2, 'Role boundary', '元启', 'materials', '彩页',
-             'Runtime CRUD contract', 1, 'public', 'public')`,
+             'Runtime CRUD contract', 'document', 1, 'public', 'public')`,
           [revisionId, resourceId],
         );
         await expect(
