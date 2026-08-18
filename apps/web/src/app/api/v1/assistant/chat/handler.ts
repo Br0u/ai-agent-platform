@@ -196,25 +196,34 @@ export function createAssistantChatHandler(
         let pageContext: PublicPageContext | null = null;
         let pageActivityLabel: string | null = null;
         if (assistantRequest.page) {
-          pageContext = await dependencies.pageResolver.load(
-            assistantRequest.page,
-            request.signal,
-          );
-          if (!pageContext)
-            throw new Error("Assistant page context unavailable");
-          pageActivityLabel = "已读取当前页面";
-          const linkedPage = linkedPageRequest(
-            assistantRequest.message,
-            pageContext,
-          );
-          if (linkedPage) {
+          try {
             pageContext = await dependencies.pageResolver.load(
-              linkedPage,
+              assistantRequest.page,
               request.signal,
             );
-            if (!pageContext)
-              throw new Error("Assistant linked page context unavailable");
-            pageActivityLabel = "已读取站内页面";
+          } catch {
+            if (request.signal.aborted) throw request.signal.reason;
+          }
+          if (pageContext) {
+            pageActivityLabel = "已读取当前页面";
+            const linkedPage = linkedPageRequest(
+              assistantRequest.message,
+              pageContext,
+            );
+            if (linkedPage) {
+              try {
+                const linkedContext = await dependencies.pageResolver.load(
+                  linkedPage,
+                  request.signal,
+                );
+                if (linkedContext) {
+                  pageContext = linkedContext;
+                  pageActivityLabel = "已读取站内页面";
+                }
+              } catch {
+                if (request.signal.aborted) throw request.signal.reason;
+              }
+            }
           }
         }
         const selected = dependencies.resolveProvider

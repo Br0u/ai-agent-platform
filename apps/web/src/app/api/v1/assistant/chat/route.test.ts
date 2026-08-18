@@ -697,7 +697,7 @@ describe("POST /api/v1/assistant/chat", () => {
     ).not.toContain("internal-replayable-value");
   });
 
-  it("fails closed before provider work when page loading returns null", async () => {
+  it("continues without page context when page loading returns null", async () => {
     const deps = dependencies();
     const streamingProvider = {
       reply: vi.fn(async () => providerSuccess),
@@ -714,13 +714,14 @@ describe("POST /api/v1/assistant/chat", () => {
     const response = await createAssistantChatHandler(deps)(
       request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
     );
-    expect(response.status).toBe(503);
-    expect(deps.resolveProvider).not.toHaveBeenCalled();
-    expect(streamingProvider.streamReply).not.toHaveBeenCalled();
-    expect(streamingProvider.reply).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(streamingProvider.streamReply).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ pageContext: null }),
+    );
   });
 
-  it("fails closed before provider work when page loading rejects", async () => {
+  it("continues without page context when page loading rejects", async () => {
     const deps = dependencies();
     const streamingProvider = {
       reply: vi.fn(async () => providerSuccess),
@@ -739,10 +740,11 @@ describe("POST /api/v1/assistant/chat", () => {
     const response = await createAssistantChatHandler(deps)(
       request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
     );
-    expect(response.status).toBe(503);
-    expect(deps.resolveProvider).not.toHaveBeenCalled();
-    expect(streamingProvider.streamReply).not.toHaveBeenCalled();
-    expect(streamingProvider.reply).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(streamingProvider.streamReply).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ pageContext: null }),
+    );
   });
 
   it("does not start provider work when the request aborts during page loading", async () => {
@@ -878,16 +880,17 @@ describe("POST /api/v1/assistant/chat", () => {
     );
   });
 
-  it("fails closed when an explicitly named linked public page is unavailable", async () => {
+  it("keeps the current page when a named linked public page is unavailable", async () => {
     const deps = dependencies();
+    const currentPage: PublicPageContext = {
+      pathname: "/solutions/finance-compliance",
+      search: "",
+      title: "贷款合规智能审查",
+      text: "当前方案正文",
+      links: [],
+    };
     deps.pageResolver.load
-      .mockResolvedValueOnce({
-        pathname: "/solutions/finance-compliance",
-        search: "",
-        title: "贷款合规智能审查",
-        text: "当前方案正文",
-        links: [],
-      })
+      .mockResolvedValueOnce(currentPage)
       .mockResolvedValueOnce(null);
 
     const response = await createAssistantChatHandler(deps)(
@@ -899,9 +902,10 @@ describe("POST /api/v1/assistant/chat", () => {
       ),
     );
 
-    expect(response.status).toBe(503);
-    expect(deps.resolveProvider).not.toHaveBeenCalled();
-    expect(deps.provider.reply).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(deps.provider.reply).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ pageContext: currentPage }),
+    );
   });
 
   it("keeps the current page for navigation requests so action matching still works", async () => {
