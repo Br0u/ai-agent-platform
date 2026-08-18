@@ -6,7 +6,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   downloadResourceAccess,
+  downloadArtifactSlot,
   downloadResourceCategory,
+  downloadResourceArtifacts,
+  downloadResourceKind,
   downloadResourceRevisions,
   downloadResources,
   downloadResourceState,
@@ -26,12 +29,21 @@ describe("download resource schema", () => {
       "deployment",
       "whitepapers",
     ]);
+    expect(downloadResourceKind.enumValues).toEqual(["document", "software"]);
+    expect(downloadArtifactSlot.enumValues).toEqual([
+      "document",
+      "windows",
+      "macos",
+    ]);
   });
 
   it("exports resource and revision tables", () => {
     expect(getTableConfig(downloadResources).name).toBe("download_resources");
     expect(getTableConfig(downloadResourceRevisions).name).toBe(
       "download_resource_revisions",
+    );
+    expect(getTableConfig(downloadResourceArtifacts).name).toBe(
+      "download_resource_artifacts",
     );
   });
 
@@ -42,6 +54,7 @@ describe("download resource schema", () => {
       "id",
       "key",
       "admin_label",
+      "kind",
       "state",
       "published_revision_id",
       "draft_revision_id",
@@ -56,6 +69,7 @@ describe("download resource schema", () => {
     ).toEqual([
       "id",
       "resource_id",
+      "resource_kind",
       "name",
       "product",
       "category",
@@ -64,6 +78,7 @@ describe("download resource schema", () => {
       "sort_order",
       "preview_policy",
       "download_policy",
+      "release_version",
       "pdf_object_key",
       "cover_object_key",
       "page_count",
@@ -74,6 +89,25 @@ describe("download resource schema", () => {
       "published_at",
       "cleanup_pending_at",
       "cleanup_error_summary",
+    ]);
+    expect(
+      getTableConfig(downloadResourceArtifacts).columns.map(
+        (column) => column.name,
+      ),
+    ).toEqual([
+      "id",
+      "revision_id",
+      "revision_kind",
+      "slot",
+      "object_key",
+      "original_filename",
+      "extension",
+      "media_type",
+      "byte_size",
+      "sha256",
+      "page_count",
+      "cover_object_key",
+      "created_at",
     ]);
   });
 
@@ -97,6 +131,18 @@ describe("download resource schema", () => {
         "download_resource_revisions_byte_size_positive_check",
         "download_resource_revisions_sha256_check",
         "download_resource_revisions_access_check",
+        "download_resource_revisions_kind_policy_check",
+      ]),
+    );
+    expect(
+      getTableConfig(downloadResourceArtifacts).checks.map(
+        (check) => check.name,
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        "download_resource_artifacts_byte_size_positive_check",
+        "download_resource_artifacts_sha256_check",
+        "download_resource_artifacts_kind_slot_file_check",
       ]),
     );
   });
@@ -139,6 +185,69 @@ describe("download resource schema", () => {
         (constraint) => constraint.name,
       ),
     ).toContain("download_resources_key_unique");
+    expect(
+      getTableConfig(downloadResources).uniqueConstraints.map(
+        (constraint) => constraint.name,
+      ),
+    ).toContain("download_resources_id_kind_unique");
+    expect(
+      getTableConfig(downloadResourceRevisions).uniqueConstraints.map(
+        (constraint) => constraint.name,
+      ),
+    ).toContain("download_resource_revisions_id_kind_unique");
+  });
+
+  it("ties revision and artifact kinds to their immutable parent kind", () => {
+    const revisionForeignKeys = getTableConfig(
+      downloadResourceRevisions,
+    ).foreignKeys.map((foreignKey) => {
+      const reference = foreignKey.reference();
+      return {
+        name: foreignKey.getName(),
+        columns: reference.columns.map((column) => column.name),
+        foreignColumns: reference.foreignColumns.map((column) => column.name),
+      };
+    });
+    const artifactForeignKeys = getTableConfig(
+      downloadResourceArtifacts,
+    ).foreignKeys.map((foreignKey) => {
+      const reference = foreignKey.reference();
+      return {
+        name: foreignKey.getName(),
+        columns: reference.columns.map((column) => column.name),
+        foreignColumns: reference.foreignColumns.map((column) => column.name),
+      };
+    });
+
+    expect(revisionForeignKeys).toContainEqual({
+      name: "download_resource_revisions_resource_kind_fk",
+      columns: ["resource_id", "resource_kind"],
+      foreignColumns: ["id", "kind"],
+    });
+    expect(artifactForeignKeys).toContainEqual({
+      name: "download_resource_artifacts_revision_kind_fk",
+      columns: ["revision_id", "revision_kind"],
+      foreignColumns: ["id", "resource_kind"],
+    });
+  });
+
+  it("keeps the transitional defaults and immutable kind trigger in the migration", () => {
+    const migration = readFileSync(
+      new URL(
+        "../../drizzle/0012_download_resource_artifacts.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    expect(migration).toContain(
+      'ADD COLUMN "kind" "download_resource_kind" DEFAULT \'document\' NOT NULL',
+    );
+    expect(migration).toContain(
+      'ADD COLUMN "resource_kind" "download_resource_kind" DEFAULT \'document\' NOT NULL',
+    );
+    expect(migration).toContain(
+      'CREATE TRIGGER "download_resources_kind_immutable_guard"',
+    );
   });
 
   it("seeds the fixed identities and metadata-only drafts", () => {

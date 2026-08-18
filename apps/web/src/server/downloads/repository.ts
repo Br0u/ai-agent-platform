@@ -425,6 +425,9 @@ export const downloadResourceRepository = {
       .where(
         and(
           eq(downloadResources.state, "published"),
+          eq(downloadResources.kind, "document"),
+          eq(publishedRevision.resourceKind, "document"),
+          isNotNull(publishedRevision.previewPolicy),
           isNotNull(publishedRevision.pdfObjectKey),
           isNotNull(publishedRevision.coverObjectKey),
           isNotNull(publishedRevision.pageCount),
@@ -457,6 +460,9 @@ export const downloadResourceRepository = {
         and(
           eq(downloadResources.key, key),
           eq(downloadResources.state, "published"),
+          eq(downloadResources.kind, "document"),
+          eq(publishedRevision.resourceKind, "document"),
+          isNotNull(publishedRevision.previewPolicy),
           isNotNull(publishedRevision.pdfObjectKey),
           isNotNull(publishedRevision.coverObjectKey),
           isNotNull(publishedRevision.pageCount),

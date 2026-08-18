@@ -1,3 +1,16 @@
+import {
+  copyFile,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
@@ -5,6 +18,32 @@ import { describe, expect, it } from "vitest";
 
 import { assertSafeIdentityMigrationTestDatabaseUrl } from "./migrations/migration-test-safety";
 import { runMigrations } from "./migrate";
+
+async function createMigrationsThrough0011() {
+  const folder = await mkdtemp(join(tmpdir(), "download-resource-migrations-"));
+  const sourceFolder = new URL("../drizzle/", import.meta.url);
+  const targetMeta = join(folder, "meta");
+  await mkdir(targetMeta);
+
+  for (const entry of await readdir(sourceFolder)) {
+    if (/^00(?:0[0-9]|1[01])_.*\.sql$/u.test(entry)) {
+      await copyFile(new URL(entry, sourceFolder), join(folder, entry));
+    }
+  }
+
+  const journal = JSON.parse(
+    await readFile(new URL("meta/_journal.json", sourceFolder), "utf8"),
+  ) as { entries: Array<{ idx: number }> };
+  await writeFile(
+    join(targetMeta, "_journal.json"),
+    `${JSON.stringify(
+      { ...journal, entries: journal.entries.filter(({ idx }) => idx <= 11) },
+      null,
+      2,
+    )}\n`,
+  );
+  return folder;
+}
 
 const expectedDocumentSeed = [
   [
@@ -77,6 +116,11 @@ const expectedDownloadResourceKeys = [
 ] as const;
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
+if (process.env.RUN_DOWNLOAD_RESOURCE_DB_TEST === "true" && !testDatabaseUrl) {
+  throw new Error(
+    "TEST_DATABASE_URL is required when RUN_DOWNLOAD_RESOURCE_DB_TEST=true",
+  );
+}
 const safeTestDatabaseUrl = testDatabaseUrl
   ? assertSafeIdentityMigrationTestDatabaseUrl(testDatabaseUrl)
   : undefined;
@@ -516,6 +560,216 @@ describePostgres("concurrent production migrations", () => {
       constraint: "assistant_input_policy_revision_positive_check",
     });
     await verifier.end();
-    expect(journal.rows).toEqual([{ count: "12" }]);
+    expect(journal.rows).toEqual([{ count: "13" }]);
+  });
+
+  it("backfills legacy PDFs into document artifacts and enforces typed artifacts", async () => {
+    const setupPool = new Pool({ connectionString: safeTestDatabaseUrl });
+    await setupPool.query("DROP SCHEMA IF EXISTS public CASCADE");
+    await setupPool.query("DROP SCHEMA IF EXISTS drizzle CASCADE");
+    await setupPool.query("CREATE SCHEMA public");
+    await setupPool.end();
+
+    const migrationFolder = await createMigrationsThrough0011();
+    const beforePool = new Pool({ connectionString: safeTestDatabaseUrl });
+    const beforeClient = await beforePool.connect();
+    try {
+      await migrate(drizzle(beforeClient), {
+        migrationsFolder: migrationFolder,
+      });
+    } finally {
+      beforeClient.release();
+      await beforePool.end();
+      await rm(migrationFolder, { recursive: true, force: true });
+    }
+
+    const legacyPool = new Pool({ connectionString: safeTestDatabaseUrl });
+    const legacyRevision = await legacyPool.query<{ id: string }>(
+      `INSERT INTO download_resource_revisions
+         (resource_id, name, product, category, resource_type, description,
+          sort_order, preview_policy, download_policy, pdf_object_key,
+          cover_object_key, page_count, byte_size, sha256)
+       SELECT id, 'Legacy PDF', '元启', 'materials', '说明书', 'legacy PDF',
+              999, 'public', 'public', 'downloads/legacy.pdf',
+              'downloads/legacy.webp', 3, 1024, repeat('a', 64)
+       FROM download_resources
+       WHERE key = 'yuanqi-fullstack'
+       RETURNING id::text`,
+    );
+    const seededLegacyRevisionId = legacyRevision.rows[0]?.id;
+    const seededLegacyResourceKey = "yuanqi-fullstack";
+    const seededLegacyPdfObjectKey = "downloads/legacy.pdf";
+    await legacyPool.query(
+      `UPDATE download_resources
+       SET draft_revision_id = $1
+       WHERE key = $2`,
+      [seededLegacyRevisionId, seededLegacyResourceKey],
+    );
+    await legacyPool.end();
+
+    const afterPool = new Pool({ connectionString: safeTestDatabaseUrl });
+    const afterClient = await afterPool.connect();
+    try {
+      await migrate(drizzle(afterClient), {
+        migrationsFolder: fileURLToPath(new URL("../drizzle", import.meta.url)),
+      });
+    } finally {
+      afterClient.release();
+      await afterPool.end();
+    }
+
+    const verifier = new Pool({ connectionString: safeTestDatabaseUrl });
+    try {
+      const kinds = await verifier.query<{ key: string; kind: string }>(
+        "SELECT key, kind::text FROM download_resources ORDER BY key",
+      );
+      const kindByKey = new Map(kinds.rows.map(({ key, kind }) => [key, kind]));
+      expect(kindByKey.get("mdd2-client")).toBe("software");
+      expect(
+        [...kindByKey.entries()].filter(([key]) => key !== "mdd2-client"),
+      ).toEqual(
+        expectedDownloadResourceKeys
+          .filter((key) => key !== "mdd2-client")
+          .sort()
+          .map((key) => [key, "document"]),
+      );
+
+      const migratedArtifacts = await verifier.query<{
+        resourceKey: string;
+        slot: string;
+        originalFilename: string;
+        mediaType: string;
+        objectKey: string;
+      }>(
+        `SELECT resource.key AS "resourceKey", artifact.slot::text AS slot,
+                artifact.original_filename AS "originalFilename",
+                artifact.media_type AS "mediaType", artifact.object_key AS "objectKey"
+         FROM download_resource_artifacts artifact
+         JOIN download_resource_revisions revision ON revision.id = artifact.revision_id
+         JOIN download_resources resource ON resource.id = revision.resource_id
+         ORDER BY resource.key`,
+      );
+      expect(
+        migratedArtifacts.rows.every(
+          (artifact) =>
+            artifact.slot === "document" &&
+            artifact.originalFilename === `${artifact.resourceKey}.pdf` &&
+            artifact.mediaType === "application/pdf",
+        ),
+      ).toBe(true);
+      expect(migratedArtifacts.rows).toContainEqual(
+        expect.objectContaining({
+          resourceKey: seededLegacyResourceKey,
+          objectKey: seededLegacyPdfObjectKey,
+        }),
+      );
+
+      const softwareRevision = await verifier.query<{ id: string }>(
+        `INSERT INTO download_resource_revisions
+           (resource_id, resource_kind, name, product, category, resource_type,
+            description, sort_order, preview_policy, download_policy, release_version)
+         SELECT id, 'software', '码里奥桌面客户端', '码里奥', 'software', '客户端',
+                'installer', 1, NULL, 'public', '1.0.0'
+         FROM download_resources
+         WHERE key = 'mdd2-client'
+         RETURNING id::text`,
+      );
+      const softwareRevisionId = softwareRevision.rows[0]?.id;
+      expect(softwareRevisionId).toBeTruthy();
+
+      const insertArtifact = (values: string) =>
+        verifier.query(
+          `INSERT INTO download_resource_artifacts
+             (revision_id, revision_kind, slot, object_key, original_filename,
+              extension, media_type, byte_size, sha256, page_count, cover_object_key)
+           VALUES ${values}`,
+        );
+      await expect(
+        verifier.query(
+          "UPDATE download_resources SET kind = 'document' WHERE key = 'mdd2-client'",
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        insertArtifact(
+          `('${seededLegacyRevisionId}', 'document', 'windows', 'bad.zip', 'bad.zip', '.zip', 'application/zip', 1, repeat('a', 64), NULL, NULL)`,
+        ),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "download_resource_artifacts_kind_slot_file_check",
+      });
+      await expect(
+        insertArtifact(
+          `('${softwareRevisionId}', 'software', 'document', 'bad.pdf', 'bad.pdf', '.pdf', 'application/pdf', 1, repeat('a', 64), 1, 'bad.webp')`,
+        ),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "download_resource_artifacts_kind_slot_file_check",
+      });
+      await expect(
+        insertArtifact(
+          `('${softwareRevisionId}', 'software', 'windows', 'bad.dmg', 'bad.dmg', '.dmg', 'application/x-apple-diskimage', 1, repeat('a', 64), NULL, NULL)`,
+        ),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "download_resource_artifacts_kind_slot_file_check",
+      });
+      await expect(
+        insertArtifact(
+          `('${softwareRevisionId}', 'software', 'windows', 'bad.zip', 'bad.zip', '.zip', 'application/zip', 0, repeat('a', 64), NULL, NULL)`,
+        ),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "download_resource_artifacts_byte_size_positive_check",
+      });
+      await expect(
+        insertArtifact(
+          `('${softwareRevisionId}', 'software', 'windows', 'bad.zip', 'bad.zip', '.zip', 'application/zip', 1, repeat('A', 64), NULL, NULL)`,
+        ),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "download_resource_artifacts_sha256_check",
+      });
+      await expect(
+        verifier.query(
+          `INSERT INTO download_resource_revisions
+             (resource_id, resource_kind, name, product, category, resource_type,
+              description, sort_order, preview_policy, download_policy, release_version)
+           SELECT id, 'software', 'invalid', '码里奥', 'software', '客户端',
+                  'invalid', 2, NULL, 'public', NULL
+           FROM download_resources WHERE key = 'mdd2-client'`,
+        ),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "download_resource_revisions_kind_policy_check",
+      });
+      await expect(
+        verifier.query(
+          `INSERT INTO download_resource_revisions
+             (resource_id, resource_kind, name, product, category, resource_type,
+              description, sort_order, preview_policy, download_policy, release_version)
+           SELECT id, 'software', 'invalid', '码里奥', 'software', '客户端',
+                  'invalid', 2, 'public', 'public', '1.0.0'
+           FROM download_resources WHERE key = 'mdd2-client'`,
+        ),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "download_resource_revisions_kind_policy_check",
+      });
+      await expect(
+        verifier.query(
+          `INSERT INTO download_resource_revisions
+             (resource_id, resource_kind, name, product, category, resource_type,
+              description, sort_order, preview_policy, download_policy, release_version)
+           SELECT id, 'document', 'invalid', '元启', 'materials', '说明书',
+                  'invalid', 2, 'public', 'public', '1.0.0'
+           FROM download_resources WHERE key = 'yuanqi-fullstack'`,
+        ),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "download_resource_revisions_kind_policy_check",
+      });
+    } finally {
+      await verifier.end();
+    }
   });
 });

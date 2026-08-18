@@ -233,6 +233,11 @@ describe("download resource repository contract", () => {
     );
   });
 
+  it("keeps the document-only public query away from software revisions", () => {
+    expect(source).toContain('eq(downloadResources.kind, "document")');
+    expect(source).toContain('eq(publishedRevision.resourceKind, "document")');
+  });
+
   it("locks the complete active-workforce admin:downloads permission chain", () => {
     expect(source).toMatch(
       /FROM users u[\s\S]*JOIN user_roles ur[\s\S]*JOIN roles r[\s\S]*JOIN role_permissions rp[\s\S]*JOIN permissions p/u,

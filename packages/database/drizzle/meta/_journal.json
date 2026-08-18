@@ -85,6 +85,13 @@
       "when": 1786858709269,
       "tag": "0011_download_resources",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1787029598306,
+      "tag": "0012_download_resource_artifacts",
+      "breakpoints": true
     }
   ]
 }
