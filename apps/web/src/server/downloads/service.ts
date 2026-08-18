@@ -13,17 +13,13 @@ import { requirePermission, type WorkforceActor } from "../auth/access";
 import {
   adminDownloadQuerySchema,
   artifactSlotSchema,
-  createDownloadResourceInputSchema,
   deriveAdminStatus,
-  downloadResourceAdminDtoSchema,
   downloadResourcePublicDtoSchema,
   mutateDownloadResourceInputSchema,
-  saveDownloadDraftInputSchema,
   typedCreateDownloadResourceInputSchema,
   typedDownloadResourceAdminDtoSchema,
   typedDownloadResourcePublicDtoSchema,
   typedSaveDownloadDraftInputSchema,
-  type DownloadResourceAdminDto,
   type DownloadResourcePublicDto,
   type TypedDownloadResourceAdminDto,
   type TypedDownloadResourcePublicDto,
@@ -214,44 +210,6 @@ async function typedAdminDto(
     updatedAt: resource.updatedAt.toISOString(),
   });
 }
-async function adminDto(resource: Resource): Promise<DownloadResourceAdminDto> {
-  const typed = await typedAdminDto(resource);
-  const project = (revision: typeof typed.publishedRevision) => {
-    if (!revision || revision.kind !== "document") return null;
-    const document = revision.artifacts[0];
-    return {
-      id: revision.id,
-      name: revision.name,
-      product: revision.product,
-      category: revision.category,
-      resourceType: revision.resourceType,
-      description: revision.description,
-      sortOrder: revision.sortOrder,
-      previewPolicy: revision.previewPolicy,
-      downloadPolicy: revision.downloadPolicy,
-      pdfObjectKey: document?.objectKey ?? null,
-      coverObjectKey:
-        document?.slot === "document" ? document.coverObjectKey : null,
-      pageCount: document?.slot === "document" ? document.pageCount : null,
-      byteSize: document?.byteSize ?? null,
-      sha256: document?.sha256 ?? null,
-      createdAt: revision.createdAt,
-      publishedAt: revision.publishedAt,
-    };
-  };
-  return parse(downloadResourceAdminDtoSchema, {
-    id: typed.id,
-    key: typed.key,
-    adminLabel: typed.adminLabel,
-    state: typed.state,
-    adminStatus: typed.adminStatus,
-    rowVersion: typed.rowVersion,
-    publishedRevision: project(typed.publishedRevision),
-    draftRevision: project(typed.draftRevision),
-    createdAt: typed.createdAt,
-    updatedAt: typed.updatedAt,
-  });
-}
 function revisionInput(
   resource: Resource,
   input: z.infer<typeof typedSaveDownloadDraftInputSchema>,
@@ -422,16 +380,6 @@ async function authenticated() {
 }
 
 export const downloadResourceService = {
-  async listAdminResources(rawQuery: unknown) {
-    await authenticated();
-    const result = await downloadResourceRepository.listAdmin(
-      parse(adminDownloadQuerySchema, rawQuery),
-    );
-    return {
-      total: result.total,
-      items: await Promise.all(result.items.map(adminDto)),
-    };
-  },
   async listTypedAdminResources(rawQuery: unknown) {
     await authenticated();
     const result = await downloadResourceRepository.listAdmin(
@@ -442,34 +390,12 @@ export const downloadResourceService = {
       items: await Promise.all(result.items.map(typedAdminDto)),
     };
   },
-  async getAdminResource(id: unknown) {
-    await authenticated();
-    const resource = await downloadResourceRepository.getAdminById(
-      parse(mutateDownloadResourceInputSchema.shape.id, id),
-    );
-    return resource ? adminDto(resource) : null;
-  },
   async getTypedAdminResource(id: unknown) {
     await authenticated();
     const resource = await downloadResourceRepository.getAdminById(
       parse(mutateDownloadResourceInputSchema.shape.id, id),
     );
     return resource ? typedAdminDto(resource) : null;
-  },
-  async createResource(rawInput: unknown, context: Context = {}) {
-    const actor = await authenticated();
-    const input = parse(createDownloadResourceInputSchema, rawInput);
-    return downloadResourceRepository.transaction(async (tx) => {
-      await tx.assertActiveWorkforcePermission(actor.userId, "admin:downloads");
-      const created = await tx.insertResource({ ...input, kind: "document" });
-      const resource: Resource = {
-        ...created,
-        publishedRevision: null,
-        draftRevision: null,
-      };
-      await tx.appendAudit(createdAudit(actor, resource, context));
-      return adminDto(resource);
-    });
   },
   async createTypedResource(rawInput: unknown, context: Context = {}) {
     const actor = await authenticated();
@@ -485,12 +411,6 @@ export const downloadResourceService = {
       await tx.appendAudit(createdAudit(actor, resource, context));
       return typedAdminDto(resource);
     });
-  },
-  async saveDraft(rawInput: unknown, context: Context = {}) {
-    const legacy = parse(saveDownloadDraftInputSchema, rawInput);
-    return this.saveTypedDraft({ ...legacy, kind: "document" }, context).then(
-      ({ resource }) => adminDto(resource),
-    );
   },
   async saveTypedDraft(rawInput: unknown, context: Context = {}) {
     const actor = await authenticated();
@@ -742,11 +662,6 @@ export const downloadResourceService = {
         cleanupObjects(pending, actor, resource, context),
     );
   },
-  async publish(rawInput: unknown, context: Context = {}) {
-    return this.publishTyped(rawInput, context).then(({ resource }) =>
-      adminDto(resource),
-    );
-  },
   async downlineTyped(rawInput: unknown, context: Context = {}) {
     const actor = await authenticated();
     const input = parse(mutateDownloadResourceInputSchema, rawInput);
@@ -791,11 +706,6 @@ export const downloadResourceService = {
         cleanupObjects(pending, actor, resource, context),
     );
   },
-  async downline(rawInput: unknown, context: Context = {}) {
-    return this.downlineTyped(rawInput, context).then(({ resource }) =>
-      adminDto(resource),
-    );
-  },
   async discardTyped(rawInput: unknown, context: Context = {}) {
     const actor = await authenticated();
     const input = parse(mutateDownloadResourceInputSchema, rawInput);
@@ -832,11 +742,6 @@ export const downloadResourceService = {
       },
       async ({ resource, pending }) =>
         cleanupObjects(pending, actor, resource, context),
-    );
-  },
-  async discardDraft(rawInput: unknown, context: Context = {}) {
-    return this.discardTyped(rawInput, context).then(({ resource }) =>
-      adminDto(resource),
     );
   },
   async removeDraftArtifact(rawInput: unknown, context: Context = {}) {
@@ -916,13 +821,6 @@ export const downloadResourceService = {
       async ({ resource, pending }) =>
         cleanupObjects(pending, actor, resource, context),
     );
-  },
-  async removeDraftFile(rawInput: unknown, context: Context = {}) {
-    const input = parse(mutateDownloadResourceInputSchema, rawInput);
-    return this.removeDraftArtifact(
-      { ...input, slot: "document" },
-      context,
-    ).then(({ resource }) => adminDto(resource));
   },
   async listTypedPublicResources(): Promise<TypedDownloadResourcePublicDto[]> {
     const resources = await downloadResourceRepository.listPublic();

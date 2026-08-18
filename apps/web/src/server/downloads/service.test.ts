@@ -639,7 +639,7 @@ describe("typed download artifact lifecycle", () => {
     };
     for (const item of pending.artifacts) item.revisionId = pending.id;
     wiring.revisions.set(pending.id, pending);
-    await downloadResourceService.discardDraft({
+    await downloadResourceService.discardTyped({
       id: value.id,
       expectedRowVersion: 1,
     });
@@ -668,7 +668,7 @@ describe("typed download artifact lifecycle", () => {
         id: randomUUID(),
         revisionId: otherRevision.id,
       }));
-      await downloadResourceService.discardDraft({
+      await downloadResourceService.discardTyped({
         id: owner.id,
         expectedRowVersion: 1,
       });
@@ -882,7 +882,7 @@ describe("typed download artifact lifecycle", () => {
     ]);
     const revisionId = value.draftRevisionId!;
     wiring.failRemove.add("objects/remove");
-    await downloadResourceService.discardDraft(
+    await downloadResourceService.discardTyped(
       { id: value.id, expectedRowVersion: 1 },
       { ipAddress: "203.0.113.8", userAgent: "cleanup-test" },
     );
@@ -945,7 +945,7 @@ describe("typed download artifact lifecycle", () => {
       document.id,
     ).publishedRevisionId;
     if (!publishedRevisionId) throw new Error("Missing published revision");
-    await downloadResourceService.downline(
+    await downloadResourceService.downlineTyped(
       { id: document.id, expectedRowVersion: 4 },
       context,
     );
@@ -958,7 +958,7 @@ describe("typed download artifact lifecycle", () => {
     );
     const removedRevisionId = currentResource(software.id).draftRevisionId;
     if (!removedRevisionId) throw new Error("Missing removed revision");
-    await downloadResourceService.discardDraft(
+    await downloadResourceService.discardTyped(
       { id: software.id, expectedRowVersion: 2 },
       context,
     );

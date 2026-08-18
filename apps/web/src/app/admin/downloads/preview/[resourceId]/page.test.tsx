@@ -11,7 +11,7 @@ vi.mock("@/server/auth/access", () => ({
   requirePermission: mocks.requirePermission,
 }));
 vi.mock("@/server/downloads/service", () => ({
-  downloadResourceService: { getAdminResource: mocks.get },
+  downloadResourceService: { getTypedAdminResource: mocks.get },
 }));
 vi.mock("@/components/downloads/pdf-viewer", () => ({
   PdfViewer: (props: Record<string, string>) => (
@@ -28,22 +28,32 @@ const resource = {
   adminLabel: "产品彩页",
   adminStatus: "待发布",
   createdAt: "2026-08-16T00:00:00.000Z",
+  kind: "document",
   draftRevision: {
-    byteSize: 1_000,
+    kind: "document",
     category: "materials",
-    coverObjectKey: "cover.webp",
     createdAt: "2026-08-16T00:00:00.000Z",
     description: "产品彩页",
     downloadPolicy: "contact",
     id: "019f7b47-3040-7000-8000-000000000088",
     name: "待发布产品彩页",
-    pageCount: 3,
-    pdfObjectKey: "guide.pdf",
     previewPolicy: "contact",
     product: "元启",
     publishedAt: null,
     resourceType: "彩页",
-    sha256: "a".repeat(64),
+    artifacts: [
+      {
+        slot: "document",
+        objectKey: "guide.pdf",
+        originalFilename: "guide.pdf",
+        extension: ".pdf",
+        mediaType: "application/pdf",
+        byteSize: 1_000,
+        sha256: "a".repeat(64),
+        pageCount: 3,
+        coverObjectKey: "cover.webp",
+      },
+    ],
     sortOrder: 1,
   },
   id: resourceId,

@@ -2,12 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   adminDownloadQuerySchema,
-  createDownloadResourceInputSchema,
   deriveAdminStatus,
-  downloadResourceAdminDtoSchema,
   downloadResourcePublicDtoSchema,
   mutateDownloadResourceInputSchema,
-  saveDownloadDraftInputSchema,
   suggestDownloadPolicies,
   typedCreateDownloadResourceInputSchema,
   typedDownloadResourceAdminDtoSchema,
@@ -29,105 +26,7 @@ const metadata = {
   downloadPolicy: "contact",
 } as const;
 
-const artifact = {
-  pdfObjectKey: "resources/resource.pdf",
-  coverObjectKey: "resources/cover.webp",
-  pageCount: 3,
-  byteSize: 1024,
-  sha256: "a".repeat(64),
-};
-
-const revision = {
-  id: revisionId,
-  ...metadata,
-  name: "产品说明",
-  product: "元启",
-  resourceType: "产品说明书",
-  description: "产品说明",
-  ...artifact,
-  createdAt: "2026-08-16T00:00:00.000Z",
-  publishedAt: null,
-};
-
 describe("download resource contracts", () => {
-  it("accepts bounded trimmed create and draft inputs", () => {
-    expect(
-      createDownloadResourceInputSchema.parse({
-        key: "yuanqi-intro",
-        adminLabel: " 元启产品介绍 ",
-      }),
-    ).toEqual({ key: "yuanqi-intro", adminLabel: "元启产品介绍" });
-
-    expect(
-      saveDownloadDraftInputSchema.parse({
-        id: resourceId,
-        expectedRowVersion: 1,
-        ...metadata,
-      }),
-    ).toMatchObject({
-      name: "产品说明",
-      product: "元启",
-      resourceType: "产品说明书",
-      description: "产品说明",
-    });
-  });
-
-  it.each([
-    { field: "key", value: "Upper-Case" },
-    { field: "key", value: "-bad" },
-    { field: "key", value: `a${"b".repeat(120)}` },
-    { field: "adminLabel", value: " " },
-    { field: "adminLabel", value: "a".repeat(161) },
-  ])("rejects invalid create field $field", ({ field, value }) => {
-    expect(
-      createDownloadResourceInputSchema.safeParse({
-        key: "valid-key",
-        adminLabel: "Valid",
-        [field]: value,
-      }).success,
-    ).toBe(false);
-  });
-
-  it.each([
-    { field: "name", value: " " },
-    { field: "name", value: "a".repeat(161) },
-    { field: "product", value: "a".repeat(121) },
-    { field: "resourceType", value: "a".repeat(81) },
-    { field: "description", value: "a".repeat(501) },
-    { field: "sortOrder", value: -1 },
-    { field: "sortOrder", value: 10_001 },
-    { field: "sortOrder", value: 1.5 },
-    { field: "category", value: "archive" },
-    { field: "previewPolicy", value: "contact", downloadPolicy: "public" },
-  ])("rejects invalid draft field $field", (replacement) => {
-    expect(
-      saveDownloadDraftInputSchema.safeParse({
-        id: resourceId,
-        expectedRowVersion: 1,
-        ...metadata,
-        ...replacement,
-      }).success,
-    ).toBe(false);
-  });
-
-  it("accepts exactly the three policy pairs", () => {
-    for (const [previewPolicy, downloadPolicy] of [
-      ["public", "public"],
-      ["public", "contact"],
-      ["contact", "contact"],
-    ] as const) {
-      expect(
-        saveDownloadDraftInputSchema.safeParse({
-          id: resourceId,
-          expectedRowVersion: 1,
-          ...metadata,
-          previewPolicy,
-          downloadPolicy,
-        }).success,
-      ).toBe(true);
-    }
-  });
-
   it("requires positive CAS input and deterministic bounded admin queries", () => {
     expect(
       mutateDownloadResourceInputSchema.safeParse({
@@ -155,50 +54,6 @@ describe("download resource contracts", () => {
       previewPolicy: "contact",
       downloadPolicy: "contact",
     });
-    expect(
-      saveDownloadDraftInputSchema.parse({
-        id: resourceId,
-        expectedRowVersion: 1,
-        ...metadata,
-        previewPolicy: "public",
-        downloadPolicy: "public",
-      }),
-    ).toMatchObject({ previewPolicy: "public", downloadPolicy: "public" });
-  });
-
-  it("accepts artifact metadata only when all fields are null or all are present", () => {
-    const dto = {
-      id: resourceId,
-      key: "yuanqi-intro",
-      adminLabel: "元启产品介绍",
-      state: "published",
-      adminStatus: "已发布",
-      rowVersion: 1,
-      publishedRevision: revision,
-      draftRevision: null,
-      createdAt: "2026-08-16T00:00:00.000Z",
-      updatedAt: "2026-08-16T00:00:00.000Z",
-    };
-    expect(downloadResourceAdminDtoSchema.safeParse(dto).success).toBe(true);
-    expect(
-      downloadResourceAdminDtoSchema.safeParse({
-        ...dto,
-        publishedRevision: { ...revision, coverObjectKey: null },
-      }).success,
-    ).toBe(false);
-    expect(
-      downloadResourceAdminDtoSchema.safeParse({
-        ...dto,
-        publishedRevision: {
-          ...revision,
-          pdfObjectKey: null,
-          coverObjectKey: null,
-          pageCount: null,
-          byteSize: null,
-          sha256: null,
-        },
-      }).success,
-    ).toBe(true);
   });
 
   it("derives admin status in the required priority order", () => {

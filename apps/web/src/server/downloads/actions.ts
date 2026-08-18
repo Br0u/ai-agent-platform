@@ -4,17 +4,12 @@ import { revalidatePath, updateTag } from "next/cache";
 import { z } from "zod";
 
 import { AuthAccessError, requirePermission } from "../auth/access";
-import { matchesPostgresConstraint } from "../registration/database-errors";
 import {
   artifactSlotSchema,
-  createDownloadResourceInputSchema,
-  downloadResourceAdminDtoSchema,
   mutateDownloadResourceInputSchema,
-  saveDownloadDraftInputSchema,
   typedCreateDownloadResourceInputSchema,
   typedDownloadResourceAdminDtoSchema,
   typedSaveDownloadDraftInputSchema,
-  type DownloadResourceAdminDto,
   type TypedDownloadResourceAdminDto,
 } from "./contracts";
 import { downloadResourceService } from "./service";
@@ -25,11 +20,7 @@ const PASSWORD_REDIRECT =
   "/staff/change-password?returnTo=%2Fadmin%2Fdownloads" as const;
 
 type DownloadRequestContext = { ipAddress?: string; userAgent?: string };
-type DownloadMutationInput = z.infer<typeof mutateDownloadResourceInputSchema>;
-
-export type DownloadResourceActionState =
-  | { kind: "idle" }
-  | { kind: "success"; resource: DownloadResourceAdminDto }
+export type DownloadResourceActionErrorState =
   | { kind: "validation_error"; fieldErrors: Record<string, string[]> }
   | {
       kind: "authentication_required";
@@ -57,40 +48,7 @@ export type TypedDownloadResourceActionState =
   | { kind: "success"; resource: TypedDownloadResourceAdminDto }
   | DownloadResourceActionErrorState;
 
-type DownloadResourceActionErrorState = Exclude<
-  DownloadResourceActionState,
-  { kind: "idle" | "success" }
->;
-
-type DownloadActionService = {
-  createResource(
-    input: unknown,
-    context?: DownloadRequestContext,
-  ): Promise<DownloadResourceAdminDto>;
-  saveDraft(
-    input: unknown,
-    context?: DownloadRequestContext,
-  ): Promise<DownloadResourceAdminDto>;
-  publish(
-    input: unknown,
-    context?: DownloadRequestContext,
-  ): Promise<DownloadResourceAdminDto>;
-  downline(
-    input: unknown,
-    context?: DownloadRequestContext,
-  ): Promise<DownloadResourceAdminDto>;
-  discardDraft(
-    input: unknown,
-    context?: DownloadRequestContext,
-  ): Promise<DownloadResourceAdminDto>;
-  removeDraftFile(
-    input: unknown,
-    context?: DownloadRequestContext,
-  ): Promise<DownloadResourceAdminDto>;
-};
-
-type DownloadActionsDependencies = {
-  service: DownloadActionService;
+type TypedDownloadActionsDependencies = {
   access: {
     requirePermission(permission: "admin:downloads"): Promise<unknown>;
   };
@@ -106,49 +64,43 @@ type DownloadActionsDependencies = {
 };
 
 type DownloadActionErrorDependencies = Pick<
-  DownloadActionsDependencies,
+  TypedDownloadActionsDependencies,
   "reportInternalError"
 >;
 
-type TypedDownloadActionsDependencies = Omit<
-  DownloadActionsDependencies,
-  "service"
-> & {
-  service: {
-    createTypedResource(
-      input: unknown,
-      context?: DownloadRequestContext,
-    ): Promise<TypedDownloadResourceAdminDto>;
-    saveTypedDraft(
-      input: unknown,
-      context?: DownloadRequestContext,
-    ): Promise<{ dto: TypedDownloadResourceAdminDto }>;
-    publishTyped(
-      input: unknown,
-      context?: DownloadRequestContext,
-    ): Promise<{ dto: TypedDownloadResourceAdminDto }>;
-    downlineTyped(
-      input: unknown,
-      context?: DownloadRequestContext,
-    ): Promise<{ dto: TypedDownloadResourceAdminDto }>;
-    discardTyped(
-      input: unknown,
-      context?: DownloadRequestContext,
-    ): Promise<{ dto: TypedDownloadResourceAdminDto }>;
-    removeDraftArtifact(
-      input: unknown,
-      context?: DownloadRequestContext,
-    ): Promise<{ dto: TypedDownloadResourceAdminDto }>;
+type TypedDownloadActionsDependenciesWithService =
+  TypedDownloadActionsDependencies & {
+    service: {
+      createTypedResource(
+        input: unknown,
+        context?: DownloadRequestContext,
+      ): Promise<TypedDownloadResourceAdminDto>;
+      saveTypedDraft(
+        input: unknown,
+        context?: DownloadRequestContext,
+      ): Promise<{ dto: TypedDownloadResourceAdminDto }>;
+      publishTyped(
+        input: unknown,
+        context?: DownloadRequestContext,
+      ): Promise<{ dto: TypedDownloadResourceAdminDto }>;
+      downlineTyped(
+        input: unknown,
+        context?: DownloadRequestContext,
+      ): Promise<{ dto: TypedDownloadResourceAdminDto }>;
+      discardTyped(
+        input: unknown,
+        context?: DownloadRequestContext,
+      ): Promise<{ dto: TypedDownloadResourceAdminDto }>;
+      removeDraftArtifact(
+        input: unknown,
+        context?: DownloadRequestContext,
+      ): Promise<{ dto: TypedDownloadResourceAdminDto }>;
+    };
   };
-};
 
-type Parsed<T, State = DownloadResourceActionState> =
+type Parsed<T, State = TypedDownloadResourceActionState> =
   | { success: true; data: T }
   | { success: false; state: State };
-
-export function createDownloadResourceActionState(): DownloadResourceActionState {
-  return { kind: "idle" };
-}
 
 function read(
   formData: FormData,
@@ -187,7 +139,7 @@ function parsed<
   State extends {
     kind: "validation_error";
     fieldErrors: Record<string, string[]>;
-  } = Extract<DownloadResourceActionState, { kind: "validation_error" }>,
+  } = Extract<TypedDownloadResourceActionState, { kind: "validation_error" }>,
 >(schema: z.ZodType<T>, value: unknown): Parsed<T, State> {
   const result = schema.safeParse(value);
   return result.success
@@ -211,72 +163,6 @@ function canonicalNonnegative(value: string): number | null {
   if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) return null;
   const result = Number(value);
   return Number.isSafeInteger(result) ? result : null;
-}
-
-function createInput(
-  formData: FormData,
-): Parsed<z.infer<typeof createDownloadResourceInputSchema>> {
-  const result = read(formData, ["key", "adminLabel"]);
-  if ("fieldErrors" in result)
-    return { success: false, state: { kind: "validation_error", ...result } };
-  return parsed(createDownloadResourceInputSchema, result.values);
-}
-
-function mutationInput(formData: FormData): Parsed<DownloadMutationInput> {
-  const result = read(formData, ["id", "expectedRowVersion"]);
-  if ("fieldErrors" in result)
-    return { success: false, state: { kind: "validation_error", ...result } };
-  const expectedRowVersion = canonicalPositive(
-    result.values.expectedRowVersion,
-  );
-  if (expectedRowVersion === null)
-    return {
-      success: false,
-      state: {
-        kind: "validation_error",
-        fieldErrors: { expectedRowVersion: [INVALID] },
-      },
-    };
-  return parsed(mutateDownloadResourceInputSchema, {
-    ...result.values,
-    expectedRowVersion,
-  });
-}
-
-function draftInput(
-  formData: FormData,
-): Parsed<z.infer<typeof saveDownloadDraftInputSchema>> {
-  const result = read(formData, [
-    "id",
-    "expectedRowVersion",
-    "name",
-    "product",
-    "category",
-    "resourceType",
-    "description",
-    "sortOrder",
-    "previewPolicy",
-    "downloadPolicy",
-  ]);
-  if ("fieldErrors" in result)
-    return { success: false, state: { kind: "validation_error", ...result } };
-  const expectedRowVersion = canonicalPositive(
-    result.values.expectedRowVersion,
-  );
-  const sortOrder = canonicalNonnegative(result.values.sortOrder);
-  const errors: Record<string, string[]> = {};
-  if (expectedRowVersion === null) errors.expectedRowVersion = [INVALID];
-  if (sortOrder === null) errors.sortOrder = [INVALID];
-  if (Object.keys(errors).length)
-    return {
-      success: false,
-      state: { kind: "validation_error", fieldErrors: errors },
-    };
-  return parsed(saveDownloadDraftInputSchema, {
-    ...result.values,
-    expectedRowVersion,
-    sortOrder,
-  });
 }
 
 function safeErrorState(
@@ -339,7 +225,7 @@ function safeErrorState(
 
 function invalidate(
   dependencies: Pick<
-    DownloadActionsDependencies,
+    TypedDownloadActionsDependencies,
     "cache" | "reportInternalError"
   >,
 ) {
@@ -363,73 +249,6 @@ function invalidate(
   }
 }
 
-function createErrorState(
-  error: unknown,
-): DownloadResourceActionErrorState | undefined {
-  return matchesPostgresConstraint(error, "23505", [
-    "download_resources_key_unique",
-  ])
-    ? { kind: "validation_error", fieldErrors: { key: ["资源键已存在"] } }
-    : undefined;
-}
-
-export function createDownloadResourceActions(
-  dependencies: DownloadActionsDependencies,
-) {
-  async function run<T>(
-    input: Parsed<T>,
-    mutation: (
-      value: T,
-      context: DownloadRequestContext,
-    ) => Promise<DownloadResourceAdminDto>,
-    mapError?: (error: unknown) => DownloadResourceActionState | undefined,
-  ): Promise<DownloadResourceActionState> {
-    if (!input.success) return input.state;
-    try {
-      await dependencies.access.requirePermission("admin:downloads");
-      const result = await mutation(input.data, dependencies.getContext());
-      const resource = downloadResourceAdminDtoSchema.safeParse(result);
-      if (!resource.success) throw new Error("Invalid download resource DTO");
-      invalidate(dependencies);
-      return { kind: "success", resource: resource.data };
-    } catch (error) {
-      return mapError?.(error) ?? safeErrorState(error, dependencies);
-    }
-  }
-
-  return {
-    createDownloadResourceAction: (
-      _previous: DownloadResourceActionState,
-      formData: FormData,
-    ) =>
-      run(
-        createInput(formData),
-        dependencies.service.createResource,
-        createErrorState,
-      ),
-    saveDownloadDraftAction: (
-      _previous: DownloadResourceActionState,
-      formData: FormData,
-    ) => run(draftInput(formData), dependencies.service.saveDraft),
-    publishDownloadResourceAction: (
-      _previous: DownloadResourceActionState,
-      formData: FormData,
-    ) => run(mutationInput(formData), dependencies.service.publish),
-    downlineDownloadResourceAction: (
-      _previous: DownloadResourceActionState,
-      formData: FormData,
-    ) => run(mutationInput(formData), dependencies.service.downline),
-    discardDownloadDraftAction: (
-      _previous: DownloadResourceActionState,
-      formData: FormData,
-    ) => run(mutationInput(formData), dependencies.service.discardDraft),
-    removeDownloadDraftFileAction: (
-      _previous: DownloadResourceActionState,
-      formData: FormData,
-    ) => run(mutationInput(formData), dependencies.service.removeDraftFile),
-  };
-}
-
 function reportInternalError(incident: {
   event: "download_resource.action_internal_error";
   errorName: string;
@@ -439,18 +258,6 @@ function reportInternalError(incident: {
   } catch {
     // Console availability must not affect the action result.
   }
-}
-
-export function createDefaultDownloadResourceActions(
-  context: DownloadRequestContext = {},
-) {
-  return createDownloadResourceActions({
-    service: downloadResourceService,
-    access: { requirePermission },
-    cache: { revalidatePath, updateTag },
-    getContext: () => context,
-    reportInternalError,
-  });
 }
 
 function typedCreateInput(
@@ -597,7 +404,7 @@ function typedMutationInput(
 }
 
 export function createTypedDownloadResourceActions(
-  dependencies: TypedDownloadActionsDependencies,
+  dependencies: TypedDownloadActionsDependenciesWithService,
 ) {
   const fail = (error: unknown): DownloadResourceActionErrorState =>
     safeErrorState(error, dependencies);

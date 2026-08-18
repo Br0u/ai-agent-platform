@@ -62,14 +62,6 @@ const draftMetadataSchema = z
     { path: ["downloadPolicy"], message: "Invalid access policy pair" },
   );
 
-export const createDownloadResourceInputSchema = z
-  .object({ key: keySchema, adminLabel: adminLabelSchema })
-  .strict();
-
-export const saveDownloadDraftInputSchema = draftMetadataSchema
-  .safeExtend({ id: idSchema, expectedRowVersion: rowVersionSchema })
-  .strict();
-
 export const mutateDownloadResourceInputSchema = z
   .object({ id: idSchema, expectedRowVersion: rowVersionSchema })
   .strict();
@@ -87,70 +79,6 @@ export const adminDownloadQuerySchema = z
       .number()
       .pipe(z.union([z.literal(10), z.literal(20), z.literal(50)]))
       .default(20),
-  })
-  .strict();
-
-const artifactMetadataSchema = z
-  .object({
-    pdfObjectKey: z.string().trim().min(1).max(512).nullable(),
-    coverObjectKey: z.string().trim().min(1).max(512).nullable(),
-    pageCount: z.number().int().positive().nullable(),
-    byteSize: z.number().int().positive().nullable(),
-    sha256: z
-      .string()
-      .regex(/^[0-9a-f]{64}$/u)
-      .nullable(),
-  })
-  .strict()
-  .superRefine((artifact, context) => {
-    const values = Object.values(artifact);
-    if (
-      !values.every((value) => value === null) &&
-      values.some((value) => value === null)
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Artifact metadata must be empty or complete",
-      });
-    }
-  });
-
-const revisionDtoSchema = draftMetadataSchema
-  .safeExtend({
-    id: idSchema,
-    ...artifactMetadataSchema.shape,
-    createdAt: z.string().datetime({ offset: true }),
-    publishedAt: z.string().datetime({ offset: true }).nullable(),
-  })
-  .strict()
-  .superRefine((revision, context) => {
-    const parsed = artifactMetadataSchema.safeParse({
-      pdfObjectKey: revision.pdfObjectKey,
-      coverObjectKey: revision.coverObjectKey,
-      pageCount: revision.pageCount,
-      byteSize: revision.byteSize,
-      sha256: revision.sha256,
-    });
-    if (!parsed.success) {
-      context.addIssue({
-        code: "custom",
-        message: "Artifact metadata must be empty or complete",
-      });
-    }
-  });
-
-export const downloadResourceAdminDtoSchema = z
-  .object({
-    id: idSchema,
-    key: keySchema,
-    adminLabel: adminLabelSchema,
-    state: z.enum(DOWNLOAD_RESOURCE_STATES),
-    adminStatus: z.enum(DOWNLOAD_RESOURCE_ADMIN_STATUSES),
-    rowVersion: z.number().int().positive(),
-    publishedRevision: revisionDtoSchema.nullable(),
-    draftRevision: revisionDtoSchema.nullable(),
-    createdAt: z.string().datetime({ offset: true }),
-    updatedAt: z.string().datetime({ offset: true }),
   })
   .strict();
 
@@ -415,19 +343,10 @@ export const typedDownloadResourcePublicDtoSchema = z.discriminatedUnion(
   ],
 );
 
-export type CreateDownloadResourceInput = z.infer<
-  typeof createDownloadResourceInputSchema
->;
-export type SaveDownloadDraftInput = z.infer<
-  typeof saveDownloadDraftInputSchema
->;
 export type MutateDownloadResourceInput = z.infer<
   typeof mutateDownloadResourceInputSchema
 >;
 export type AdminDownloadQuery = z.infer<typeof adminDownloadQuerySchema>;
-export type DownloadResourceAdminDto = z.infer<
-  typeof downloadResourceAdminDtoSchema
->;
 export type DownloadResourcePublicDto = z.infer<
   typeof downloadResourcePublicDtoSchema
 >;

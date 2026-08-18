@@ -60,7 +60,7 @@ vi.mock("@/server/downloads/service", () => ({
 
 import { ArtifactUploadError } from "@/server/downloads/artifact-upload";
 import { AuthAccessError } from "@/server/auth/access";
-import { downloadResourceAdminDtoSchema } from "@/server/downloads/contracts";
+import { typedDownloadResourceAdminDtoSchema } from "@/server/downloads/contracts";
 import { PdfToolError } from "@/server/downloads/pdf-tools";
 import { MutationRequestError } from "@/server/http/require-trusted-mutation";
 import { POST } from "./route";
@@ -69,12 +69,14 @@ const uploadDto = {
   id: "11111111-1111-4111-8111-111111111111",
   key: "resource",
   adminLabel: "Resource",
+  kind: "document",
   state: "unpublished",
   adminStatus: "待发布",
   rowVersion: 3,
   publishedRevision: null,
   draftRevision: {
     id: "11111111-1111-4111-8111-111111111112",
+    kind: "document",
     name: "Resource",
     product: "Platform",
     category: "materials",
@@ -83,11 +85,19 @@ const uploadDto = {
     sortOrder: 0,
     previewPolicy: "public",
     downloadPolicy: "contact",
-    pdfObjectKey: "objects/private.pdf",
-    coverObjectKey: "objects/private.webp",
-    pageCount: 1,
-    byteSize: 12,
-    sha256: "a".repeat(64),
+    artifacts: [
+      {
+        slot: "document",
+        objectKey: "objects/private.pdf",
+        originalFilename: "guide.pdf",
+        extension: ".pdf",
+        mediaType: "application/pdf",
+        pageCount: 1,
+        coverObjectKey: "objects/private.webp",
+        byteSize: 12,
+        sha256: "a".repeat(64),
+      },
+    ],
     createdAt: "2026-08-18T00:00:00.000Z",
     publishedAt: null,
   },
@@ -154,7 +164,7 @@ describe("slot-aware admin download upload", () => {
     });
   });
 
-  it("returns the exact legacy manager DTO with its new row version", async () => {
+  it("returns the typed document DTO with its new row version", async () => {
     wiring.read.mockResolvedValueOnce({
       stage: {} as never,
       byteSize: 12,
@@ -174,7 +184,7 @@ describe("slot-aware admin download upload", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(
-      downloadResourceAdminDtoSchema.safeParse(body.resource),
+      typedDownloadResourceAdminDtoSchema.safeParse(body.resource),
     ).toMatchObject({
       success: true,
     });
