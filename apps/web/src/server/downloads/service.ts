@@ -28,11 +28,7 @@ import {
   type TypedDownloadResourceAdminDto,
   type TypedDownloadResourcePublicDto,
 } from "./contracts";
-import {
-  createDownloadFileStore,
-  type DownloadArtifactKind,
-  type DownloadStage,
-} from "./file-store";
+import { createDownloadFileStore, type DownloadStage } from "./file-store";
 import {
   downloadResourceRepository,
   type DownloadResourceAggregate as Resource,
@@ -54,15 +50,6 @@ const uploadArtifactInputSchema = mutateDownloadResourceInputSchema
     sha256: z.string().regex(/^[0-9a-f]{64}$/u),
     pageCount: z.number().int().positive().optional(),
     coverStage: z.custom<DownloadStage>().optional(),
-  })
-  .strict();
-const attachUploadedPdfInputSchema = mutateDownloadResourceInputSchema
-  .safeExtend({
-    pdfStage: z.custom<DownloadStage>(),
-    coverStage: z.custom<DownloadStage>(),
-    pageCount: z.number().int().positive(),
-    byteSize: z.number().int().positive(),
-    sha256: z.string().regex(/^[0-9a-f]{64}$/u),
   })
   .strict();
 const byteRangeSchema = z
@@ -700,26 +687,6 @@ export const downloadResourceService = {
       throw error;
     }
   },
-  async attachUploadedPdf(
-    rawInput: unknown,
-    context: Context = {},
-    signal?: AbortSignal,
-  ) {
-    const input = parse(attachUploadedPdfInputSchema, rawInput);
-    return this.attachUploadedArtifact(
-      {
-        ...input,
-        slot: "document",
-        stage: input.pdfStage,
-        coverStage: input.coverStage,
-        originalFilename: "document.pdf",
-        extension: ".pdf",
-        mediaType: "application/pdf",
-      },
-      context,
-      signal,
-    ).then(({ resource }) => adminDto(resource));
-  },
   async publishTyped(rawInput: unknown, context: Context = {}) {
     const actor = await authenticated();
     const input = parse(mutateDownloadResourceInputSchema, rawInput);
@@ -995,14 +962,14 @@ export const downloadResourceService = {
               ? {
                   filename: windows.originalFilename,
                   byteSize: windows.byteSize,
-                  downloadUrl: `/api/v1/downloads/${row.key}/windows`,
+                  downloadUrl: `/api/v1/downloads/${row.key}/download/windows`,
                 }
               : null,
             macos: macos
               ? {
                   filename: macos.originalFilename,
                   byteSize: macos.byteSize,
-                  downloadUrl: `/api/v1/downloads/${row.key}/macos`,
+                  downloadUrl: `/api/v1/downloads/${row.key}/download/macos`,
                 }
               : null,
           },
@@ -1030,53 +997,63 @@ export const downloadResourceService = {
         return parse(downloadResourcePublicDtoSchema, resource);
       });
   },
-  async getPublicArtifact(
+  async openPublishedArtifact(
     key: unknown,
-    kind: "cover" | "preview" | "download",
+    slot: Artifact["slot"],
     range?: unknown,
+    documentAccess: "cover" | "preview" | "download" = "download",
     expectedRevisionId?: unknown,
   ) {
     if (typeof key !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(key))
       return null;
     const resource = await downloadResourceRepository.getPublicByKey(key);
-    if (
-      !resource ||
-      resource.resourceKind !== "document" ||
-      !resource.publishedAt ||
-      !(await publishable(resource))
-    )
+    if (!resource || !resource.publishedAt || !(await publishable(resource)))
       return null;
-    const document = file(resource, "document");
-    if (
-      !document ||
-      !document.coverObjectKey ||
-      (kind === "cover" && expectedRevisionId !== resource.id) ||
-      (kind === "preview" && resource.previewPolicy !== "public") ||
-      (kind === "download" && resource.downloadPolicy !== "public")
-    )
-      return null;
+    const artifact = file(resource, slot);
+    if (!artifact) return null;
+    if (resource.resourceKind === "document") {
+      if (slot !== "document" || !artifact.coverObjectKey) return null;
+      if (
+        (documentAccess === "cover" && expectedRevisionId !== resource.id) ||
+        (documentAccess === "preview" && resource.previewPolicy !== "public") ||
+        (documentAccess === "download" && resource.downloadPolicy !== "public")
+      )
+        return null;
+    } else if (slot === "document") return null;
     const opened = await downloadResourceFileStore.open(
-      kind === "cover" ? document.coverObjectKey : document.objectKey,
+      resource.resourceKind === "document" && documentAccess === "cover"
+        ? artifact.coverObjectKey!
+        : artifact.objectKey,
       parse(byteRangeSchema, range),
     );
-    if (kind !== "cover" && opened.size !== document.byteSize) {
+    if (
+      !(resource.resourceKind === "document" && documentAccess === "cover") &&
+      opened.size !== artifact.byteSize
+    ) {
       opened.readable.destroy();
       return null;
     }
     return {
       ...opened,
-      filename: `${resource.name}.${kind === "cover" ? "webp" : "pdf"}`,
+      filename:
+        resource.resourceKind === "document"
+          ? `${resource.name}.${documentAccess === "cover" ? "webp" : "pdf"}`
+          : artifact.originalFilename,
+      mediaType:
+        resource.resourceKind === "document" && documentAccess === "cover"
+          ? "image/webp"
+          : artifact.mediaType,
+      extension: artifact.extension,
+      byteSize: artifact.byteSize,
       revisionId: resource.id,
     };
   },
-  async getAdminDraftArtifact(
+  async openAdminDraftArtifact(
     id: unknown,
-    kind: DownloadArtifactKind,
+    kind: "cover" | "document",
     range?: unknown,
   ) {
     await authenticated();
-    if (kind !== "pdf" && kind !== "cover")
-      throw new Error("DOWNLOAD_RESOURCE_INPUT_INVALID:kind");
     const resource = await downloadResourceRepository.getAdminById(
       parse(mutateDownloadResourceInputSchema.shape.id, id),
     );

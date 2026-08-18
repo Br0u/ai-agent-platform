@@ -18,6 +18,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDownloadFileStore } from "./file-store";
+import { artifactUploadErrorCode } from "./artifact-upload";
 import { createPdfTools, getPdfToolErrorCode, PdfToolError } from "./pdf-tools";
 
 type Outcome = Readonly<{
@@ -151,6 +152,24 @@ describe("create-download-test-pdf", () => {
 });
 
 describe("PDF metadata and cover derivation", () => {
+  it("keeps ENOSPC discoverable through PDF processing cleanup", async () => {
+    const root = await temporaryRoot();
+    const storage = Object.assign(new Error("disk full"), { code: "ENOSPC" });
+    const sharp = sharpStub({ fail: true });
+    sharp.toBuffer.mockRejectedValueOnce(storage);
+    const { pdfTools } = tools(
+      fakeSpawn([{ stdout: "Pages: 1\n" }, { pngBytes: 1024 }]),
+      sharp,
+    );
+
+    await expect(
+      pdfTools.derive(await pdfAt(root), createDownloadFileStore(root)),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        artifactUploadErrorCode(error) === "insufficient_storage",
+    );
+  });
+
   it("validates the PDF prefix before spawning any tool", async () => {
     const root = await temporaryRoot();
     const spawnProcess = fakeSpawn([]);

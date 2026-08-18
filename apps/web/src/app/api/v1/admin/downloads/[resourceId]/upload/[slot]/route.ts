@@ -9,16 +9,15 @@ import {
   requireTrustedMultipartMutation,
 } from "@/server/http/require-trusted-mutation";
 import {
-  PdfUploadError,
-  readBoundedPdfUploadMultipart,
-  takePdfUploadStage,
-} from "@/server/downloads/pdf-upload";
+  artifactUploadErrorCode,
+  readBoundedArtifactUploadMultipart,
+  takeArtifactUploadStage,
+} from "@/server/downloads/artifact-upload";
 import { getPdfToolErrorCode, pdfTools } from "@/server/downloads/pdf-tools";
 import {
   downloadResourceFileStore,
   downloadResourceService,
 } from "@/server/downloads/service";
-import { artifactUploadErrorCode } from "@/server/downloads/artifact-upload";
 
 export const runtime = "nodejs";
 
@@ -27,6 +26,8 @@ const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const MULTIPART =
   /^multipart\/form-data[\t ]*;[\t ]*boundary=(?:"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,70}"|[!#$%&'*+.^_`|~0-9A-Za-z-]{1,70})$/u;
+const slots = new Set(["document", "windows", "macos"] as const);
+type Slot = "document" | "windows" | "macos";
 
 class InputError extends Error {}
 
@@ -93,16 +94,15 @@ function statusFor(error: unknown, request: Request) {
       error.status,
       error.status === 401 ? "authentication_required" : "permission_denied",
     ] as const;
-  if (artifactUploadErrorCode(error) === "insufficient_storage")
+  const uploadCode = artifactUploadErrorCode(error);
+  if (uploadCode === "insufficient_storage")
     return [507, "insufficient_storage"] as const;
-  if (error instanceof PdfUploadError)
-    return [
-      error.code === "invalid_multipart" ? 400 : 413,
-      error.code,
-    ] as const;
-  if (error instanceof AggregateError) return [500, "internal_error"] as const;
+  if (uploadCode === "invalid_multipart")
+    return [400, "invalid_multipart"] as const;
+  if (uploadCode === "invalid_file") return [422, "invalid_file"] as const;
+  if (uploadCode === "file_too_large") return [413, "file_too_large"] as const;
   if (getPdfToolErrorCode(error) === "invalid_pdf")
-    return [422, "invalid_pdf"] as const;
+    return [422, "invalid_file"] as const;
   if (
     error instanceof Error &&
     /^(?:DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT|DOWNLOAD_RESOURCE_UPLOAD_REQUIRES_DRAFT|DOWNLOAD_RESOURCE_NOT_FOUND)$/.test(
@@ -122,10 +122,10 @@ function throwIfAborted(signal: AbortSignal) {
 
 export async function POST(
   request: Request,
-  routeContext: { params: Promise<{ resourceId?: string }> },
+  routeContext: { params: Promise<{ resourceId?: string; slot?: string }> },
 ): Promise<Response> {
   const id = requestId(request);
-  let pdfStage: ReturnType<typeof takePdfUploadStage> | undefined;
+  let stage: ReturnType<typeof takeArtifactUploadStage> | undefined;
   let coverStage:
     | Awaited<ReturnType<typeof pdfTools.derive>>["stagedCover"]
     | undefined;
@@ -133,39 +133,51 @@ export async function POST(
   try {
     requireTrustedMultipartMutation(request);
     await requirePermission("admin:downloads");
-    const resourceId = (await routeContext.params).resourceId;
+    const { resourceId, slot: rawSlot } = await routeContext.params;
     const expectedRowVersion = ifMatch(request);
     if (!resourceId || !UUID.test(resourceId) || expectedRowVersion === null)
       throw new InputError();
-    const upload = await readBoundedPdfUploadMultipart(
+    if (!rawSlot || !slots.has(rawSlot as Slot))
+      return errorResponse(id, 404, "not_found");
+    const slot = rawSlot as Slot;
+    const upload = await readBoundedArtifactUploadMultipart(
       request,
       downloadResourceFileStore,
+      slot,
     );
-    pdfStage = takePdfUploadStage(upload.stage);
-    const derived = await pdfTools.derive(
-      pdfStage.path,
-      downloadResourceFileStore,
-      request.signal,
-    );
-    coverStage = derived.stagedCover;
+    stage = takeArtifactUploadStage(upload.stage);
+    let pageCount: number | undefined;
+    if (slot === "document") {
+      const derived = await pdfTools.derive(
+        stage.path,
+        downloadResourceFileStore,
+        request.signal,
+      );
+      coverStage = derived.stagedCover;
+      pageCount = derived.pageCount;
+    }
     throwIfAborted(request.signal);
-    const resource = await downloadResourceService.attachUploadedPdf(
+    const attached = await downloadResourceService.attachUploadedArtifact(
       {
         id: resourceId,
         expectedRowVersion,
-        pdfStage,
+        slot,
+        stage,
         coverStage,
-        pageCount: derived.pageCount,
+        pageCount,
+        originalFilename: upload.originalName,
+        extension: upload.extension,
+        mediaType: upload.mediaType,
         byteSize: upload.byteSize,
         sha256: upload.sha256,
       },
       context(request),
       request.signal,
     );
-    pdfStage = undefined;
+    stage = undefined;
     coverStage = undefined;
     response = Response.json(
-      { version: "1", requestId: id, resource },
+      { version: "1", requestId: id, resource: attached.resource },
       { status: 200, headers: NO_STORE },
     );
   } catch (error) {
@@ -175,8 +187,8 @@ export async function POST(
   }
 
   const cleanupFailures: unknown[] = [];
-  if (pdfStage)
-    await discardStage(pdfStage).catch((error: unknown) =>
+  if (stage)
+    await discardStage(stage).catch((error: unknown) =>
       cleanupFailures.push(error),
     );
   if (coverStage)

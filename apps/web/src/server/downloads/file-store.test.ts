@@ -128,10 +128,11 @@ describe("download artifact file store", () => {
     expect(path.isAbsolute(stage.path)).toBe(true);
     expect(path.relative(root, stage.path).startsWith("staging/")).toBe(true);
 
-    const objectKey = await store.commit(stage, {
+    const objectKey = await store.commitArtifact(stage, {
       resourceId,
       revisionId,
-      kind: "pdf",
+      slot: "document",
+      extension: ".pdf",
     });
 
     expect(objectKey).toBe(`objects/${resourceId}/${revisionId}.pdf`);
@@ -235,10 +236,15 @@ describe("download artifact file store", () => {
     const store = createDownloadFileStore(root);
     const first = await writeStage(store, ".pdf", "original");
     const second = await writeStage(store, ".pdf", "replacement");
-    const input = { resourceId, revisionId, kind: "pdf" } as const;
+    const input = {
+      resourceId,
+      revisionId,
+      slot: "document",
+      extension: ".pdf",
+    } as const;
 
-    const objectKey = await store.commit(first, input);
-    await expect(store.commit(second, input)).rejects.toMatchObject({
+    const objectKey = await store.commitArtifact(first, input);
+    await expect(store.commitArtifact(second, input)).rejects.toMatchObject({
       code: "EEXIST",
     });
     expect(await readFile(path.join(root, objectKey), "utf8")).toBe("original");
@@ -248,10 +254,11 @@ describe("download artifact file store", () => {
     const root = await temporaryRoot();
     const store = createDownloadFileStore(root);
     const stage = await writeStage(store, ".webp", "cover");
-    const objectKey = await store.commit(stage, {
+    const objectKey = await store.commitArtifact(stage, {
       resourceId,
       revisionId,
-      kind: "cover",
+      slot: "document",
+      extension: ".webp",
     });
 
     if (process.platform !== "win32") {
@@ -295,28 +302,44 @@ describe("download artifact file store", () => {
 
     const invalidIdStage = await writeStage(store, ".pdf", "pdf");
     await expect(
-      store.commit(
+      store.commitArtifact(
         { ...invalidIdStage, path: "/tmp/caller.pdf" },
-        { resourceId, revisionId, kind: "pdf" },
+        { resourceId, revisionId, slot: "document", extension: ".pdf" },
       ),
     ).rejects.toThrow("Invalid or consumed stage");
     await expect(
-      store.commit(invalidIdStage, {
+      store.commitArtifact(invalidIdStage, {
         resourceId: "00000000-0000-6000-8000-000000000001",
         revisionId,
-        kind: "pdf",
+        slot: "document",
+        extension: ".pdf",
       }),
     ).rejects.toThrow("Invalid resource ID");
 
     const mismatch = await writeStage(store, ".webp", "cover");
     await expect(
-      store.commit(mismatch, { resourceId, revisionId, kind: "pdf" }),
-    ).rejects.toThrow("Stage extension does not match artifact kind");
+      store.commitArtifact(mismatch, {
+        resourceId,
+        revisionId,
+        slot: "document",
+        extension: ".pdf",
+      }),
+    ).rejects.toThrow("Stage extension does not match artifact slot");
 
     const committed = await writeStage(store, ".pdf", "pdf");
-    await store.commit(committed, { resourceId, revisionId, kind: "pdf" });
+    await store.commitArtifact(committed, {
+      resourceId,
+      revisionId,
+      slot: "document",
+      extension: ".pdf",
+    });
     await expect(
-      store.commit(committed, { resourceId, revisionId, kind: "pdf" }),
+      store.commitArtifact(committed, {
+        resourceId,
+        revisionId,
+        slot: "document",
+        extension: ".pdf",
+      }),
     ).rejects.toThrow("Invalid or consumed stage");
   });
 
@@ -352,7 +375,12 @@ describe("download artifact file store", () => {
     await symlink(target, stage.path);
 
     await expect(
-      store.commit(stage, { resourceId, revisionId, kind: "pdf" }),
+      store.commitArtifact(stage, {
+        resourceId,
+        revisionId,
+        slot: "document",
+        extension: ".pdf",
+      }),
     ).rejects.toThrow("Stage must be a regular file");
   });
 
@@ -370,7 +398,12 @@ describe("download artifact file store", () => {
     };
 
     await expect(
-      store.commit(stage, { resourceId, revisionId, kind: "pdf" }),
+      store.commitArtifact(stage, {
+        resourceId,
+        revisionId,
+        slot: "document",
+        extension: ".pdf",
+      }),
     ).rejects.toThrow("Stage file changed before commit");
     await expect(
       lstat(path.join(root, `objects/${resourceId}/${revisionId}.pdf`)),
@@ -397,7 +430,12 @@ describe("download artifact file store", () => {
 
     try {
       await expect(
-        store.commit(stage, { resourceId, revisionId, kind: "pdf" }),
+        store.commitArtifact(stage, {
+          resourceId,
+          revisionId,
+          slot: "document",
+          extension: ".pdf",
+        }),
       ).rejects.toThrow("Artifact commit rollback failed");
     } finally {
       await chmod(staging, 0o750);
@@ -428,7 +466,12 @@ describe("download artifact file store", () => {
     };
 
     await expect(
-      store.commit(stage, { resourceId, revisionId, kind: "pdf" }),
+      store.commitArtifact(stage, {
+        resourceId,
+        revisionId,
+        slot: "document",
+        extension: ".pdf",
+      }),
     ).rejects.toThrow("injected close failure");
     expect(closeAttempts).toBe(2);
     await expect(lstat(destination)).rejects.toMatchObject({ code: "ENOENT" });
@@ -442,10 +485,11 @@ describe("download artifact file store", () => {
     const root = await temporaryRoot();
     const store = createDownloadFileStore(root);
     const stage = await writeStage(store, ".pdf", "original");
-    const key = await store.commit(stage, {
+    const key = await store.commitArtifact(stage, {
       resourceId,
       revisionId,
-      kind: "pdf",
+      slot: "document",
+      extension: ".pdf",
     });
     const prototype = Object.getPrototypeOf(stage.writable) as FileHandle;
     const originalStat = prototype.stat;
@@ -468,10 +512,11 @@ describe("download artifact file store", () => {
     const root = await temporaryRoot();
     const store = createDownloadFileStore(root);
     const stage = await writeStage(store, ".pdf", "original");
-    const key = await store.commit(stage, {
+    const key = await store.commitArtifact(stage, {
       resourceId,
       revisionId,
-      kind: "pdf",
+      slot: "document",
+      extension: ".pdf",
     });
     await expect(
       Promise.all(Array.from({ length: 20 }, () => store.remove(key))),
@@ -482,10 +527,11 @@ describe("download artifact file store", () => {
     const root = await temporaryRoot();
     const store = createDownloadFileStore(root);
     const stage = await writeStage(store, ".pdf", "12345");
-    const key = await store.commit(stage, {
+    const key = await store.commitArtifact(stage, {
       resourceId,
       revisionId,
-      kind: "pdf",
+      slot: "document",
+      extension: ".pdf",
     });
     const descriptorDirectory =
       process.platform === "linux" ? "/proc/self/fd" : "/dev/fd";

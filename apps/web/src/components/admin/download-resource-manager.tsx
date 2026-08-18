@@ -934,9 +934,9 @@ export function DownloadResourceManager({
     setUploadingId(resource.id);
     try {
       const body = new FormData();
-      body.set("pdf", file, file.name);
+      body.set("artifact", file, file.name);
       const response = await fetch(
-        `/api/v1/admin/downloads/${resource.id}/upload`,
+        `/api/v1/admin/downloads/${resource.id}/upload/document`,
         {
           method: "POST",
           headers: { "If-Match": `"${resource.rowVersion}"` },

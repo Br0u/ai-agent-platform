@@ -24,7 +24,7 @@ vi.mock("@/server/auth/access", () => ({
   requirePermission: wiring.allow,
 }));
 vi.mock("@/server/downloads/service", () => ({
-  downloadResourceService: { getAdminDraftArtifact: wiring.artifact },
+  downloadResourceService: { openAdminDraftArtifact: wiring.artifact },
 }));
 
 import { GET, HEAD } from "./route";

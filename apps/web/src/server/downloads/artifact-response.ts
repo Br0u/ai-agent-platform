@@ -21,6 +21,7 @@ type ArtifactResponseInput = Readonly<{
   request: Request;
   artifact: OpenedDownloadArtifact;
   filename: string;
+  disposition?: "inline" | "attachment";
 }> &
   (
     | Readonly<{
@@ -58,7 +59,10 @@ export function parseSingleByteRange(
   return { start, end };
 }
 
-function contentDisposition(filename: string) {
+function contentDisposition(
+  filename: string,
+  disposition: "inline" | "attachment",
+) {
   const fallback =
     filename
       .replaceAll(/[\\"\r\n]/gu, "_")
@@ -68,19 +72,23 @@ function contentDisposition(filename: string) {
     /[!'()*]/gu,
     (character) => `%${character.codePointAt(0)!.toString(16).toUpperCase()}`,
   );
-  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+  return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
 
-function errorResponse(request: Request) {
+export function artifactErrorResponse(
+  request: Request,
+  status: number,
+  code: string,
+) {
   const candidate = request.headers.get("x-request-id");
   const requestId =
     candidate !== null && /^[A-Za-z0-9_-]{1,128}$/u.test(candidate)
       ? candidate
       : randomUUID();
   return Response.json(
-    { version: "1", requestId, error: { code: "internal_error" } },
+    { version: "1", requestId, error: { code } },
     {
-      status: 500,
+      status,
       headers: {
         "Cache-Control": NO_STORE,
         "X-Content-Type-Options": "nosniff",
@@ -95,7 +103,7 @@ export function artifactResponse(input: ArtifactResponseInput): Response {
     input.artifact.size !== input.expectedByteSize
   ) {
     input.artifact.readable.destroy();
-    return errorResponse(input.request);
+    return artifactErrorResponse(input.request, 500, "internal_error");
   }
   const parsed = parseSingleByteRange(
     input.request.method === "GET" ? input.request.headers.get("range") : null,
@@ -126,12 +134,15 @@ export function artifactResponse(input: ArtifactResponseInput): Response {
     input.artifact.end !== end
   ) {
     input.artifact.readable.destroy();
-    return errorResponse(input.request);
+    return artifactErrorResponse(input.request, 500, "internal_error");
   }
   const headers = new Headers({
     "Accept-Ranges": "bytes",
     "Cache-Control": NO_STORE,
-    "Content-Disposition": contentDisposition(input.filename),
+    "Content-Disposition": contentDisposition(
+      input.filename,
+      input.disposition ?? "attachment",
+    ),
     "Content-Length": String(end - start + 1),
     "Content-Type": input.contentType,
     "X-Content-Type-Options": "nosniff",

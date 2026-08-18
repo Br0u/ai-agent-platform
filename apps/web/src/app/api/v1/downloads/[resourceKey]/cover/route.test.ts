@@ -26,7 +26,7 @@ const wiring = vi.hoisted(() => ({
 }));
 
 vi.mock("@/server/downloads/service", () => ({
-  downloadResourceService: { getPublicArtifact: wiring.artifact },
+  downloadResourceService: { openPublishedArtifact: wiring.artifact },
 }));
 
 import { GET, HEAD } from "./route";
@@ -55,8 +55,9 @@ describe("public download cover", () => {
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(wiring.artifact).toHaveBeenCalledWith(
       "yuanqi-brochure",
-      "cover",
+      "document",
       undefined,
+      "cover",
       REVISION,
     );
   });
@@ -72,8 +73,9 @@ describe("public download cover", () => {
     await expect(response.text()).resolves.toBe("234");
     expect(wiring.artifact).toHaveBeenLastCalledWith(
       "yuanqi-brochure",
-      "cover",
+      "document",
       { start: 2, end: 4 },
+      "cover",
       REVISION,
     );
     expect(wiring.artifact).toHaveBeenCalledTimes(2);

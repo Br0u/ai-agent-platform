@@ -34,7 +34,7 @@ vi.mock("@/server/auth/access", () => ({
   requirePermission: wiring.allow,
 }));
 vi.mock("@/server/downloads/service", () => ({
-  downloadResourceService: { getAdminDraftArtifact: wiring.artifact },
+  downloadResourceService: { openAdminDraftArtifact: wiring.artifact },
 }));
 
 import { GET, HEAD } from "./route";
@@ -66,7 +66,7 @@ describe("admin draft PDF", () => {
     await expect(response.text()).resolves.toBe("234");
     expect(wiring.artifact).toHaveBeenLastCalledWith(
       "11111111-1111-4111-8111-111111111111",
-      "pdf",
+      "document",
       { start: 2, end: 4 },
     );
   });
@@ -104,7 +104,7 @@ describe("admin draft PDF", () => {
       expect(wiring.artifact).toHaveBeenCalledOnce();
       expect(wiring.artifact).toHaveBeenCalledWith(
         "11111111-1111-4111-8111-111111111111",
-        "pdf",
+        "document",
       );
     },
   );

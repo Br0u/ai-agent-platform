@@ -18,6 +18,7 @@ const wiring = vi.hoisted(() => ({
         start,
         end,
         filename: "元启产品彩页.pdf",
+        byteSize: content.length,
         revisionId: "11111111-1111-4111-8111-111111111111",
       };
     },
@@ -25,7 +26,7 @@ const wiring = vi.hoisted(() => ({
 }));
 
 vi.mock("@/server/downloads/service", () => ({
-  downloadResourceService: { getPublicArtifact: wiring.artifact },
+  downloadResourceService: { openPublishedArtifact: wiring.artifact },
 }));
 
 import { GET, HEAD } from "./route";
@@ -54,8 +55,9 @@ describe("public resource download", () => {
     await expect(response.text()).resolves.toBe("234");
     expect(wiring.artifact).toHaveBeenLastCalledWith(
       "yuanqi-brochure",
-      "download",
+      "document",
       { start: 2, end: 4 },
+      "download",
     );
     expect(wiring.artifact).toHaveBeenCalledTimes(2);
   });

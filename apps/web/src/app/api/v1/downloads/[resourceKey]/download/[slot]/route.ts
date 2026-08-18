@@ -6,25 +6,37 @@ import {
 import { downloadResourceService } from "@/server/downloads/service";
 
 const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+const slots = new Set(["windows", "macos"] as const);
+type Slot = "windows" | "macos";
+const contentTypes = {
+  ".exe": "application/vnd.microsoft.portable-executable",
+  ".msi": "application/x-msi",
+  ".zip": "application/zip",
+  ".dmg": "application/x-apple-diskimage",
+  ".pkg": "application/vnd.apple.installer+xml",
+} as const;
 
 function notFound(request: Request) {
-  const response = artifactErrorResponse(request, 404, "not_found");
-  response.headers.set("X-Content-Type-Options", "nosniff");
-  return response;
+  return artifactErrorResponse(request, 404, "not_found");
 }
 
 async function serve(
   request: Request,
-  context: { params: Promise<{ resourceKey?: string }> },
+  context: { params: Promise<{ resourceKey?: string; slot?: string }> },
 ) {
   try {
-    const resourceKey = (await context.params).resourceKey;
-    if (!resourceKey || !KEY.test(resourceKey)) return notFound(request);
+    const { resourceKey, slot: rawSlot } = await context.params;
+    if (
+      !resourceKey ||
+      !KEY.test(resourceKey) ||
+      !rawSlot ||
+      !slots.has(rawSlot as Slot)
+    )
+      return notFound(request);
+    const slot = rawSlot as Slot;
     let artifact = await downloadResourceService.openPublishedArtifact(
       resourceKey,
-      "document",
-      undefined,
-      "download",
+      slot,
     );
     if (!artifact) return notFound(request);
     const range = parseSingleByteRange(
@@ -35,19 +47,23 @@ async function serve(
       artifact.readable.destroy();
       artifact = await downloadResourceService.openPublishedArtifact(
         resourceKey,
-        "document",
+        slot,
         range,
-        "download",
       );
       if (!artifact) return notFound(request);
+    }
+    const contentType =
+      contentTypes[artifact.extension as keyof typeof contentTypes];
+    if (!contentType) {
+      artifact.readable.destroy();
+      return notFound(request);
     }
     return artifactResponse({
       request,
       artifact,
-      contentType: "application/pdf",
+      contentType,
       expectedByteSize: artifact.byteSize,
       filename: artifact.filename,
-      disposition: "attachment",
     });
   } catch {
     return notFound(request);

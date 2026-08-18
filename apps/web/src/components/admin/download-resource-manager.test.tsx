@@ -254,9 +254,10 @@ describe("DownloadResourceManager", () => {
     );
     await waitFor(() => expect(screen.getByText("版本 3")).toBeInTheDocument());
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      `/api/v1/admin/downloads/${resource.id}/upload`,
+      `/api/v1/admin/downloads/${resource.id}/upload/document`,
       expect.objectContaining({
         headers: expect.objectContaining({ "If-Match": '"2"' }),
+        body: expect.any(FormData),
       }),
     );
   });
@@ -544,7 +545,7 @@ describe("DownloadResourceManager", () => {
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "发布资源" })).toBeEnabled();
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      `/api/v1/admin/downloads/${invalidPublished.id}/upload`,
+      `/api/v1/admin/downloads/${invalidPublished.id}/upload/document`,
       expect.objectContaining({
         headers: expect.objectContaining({ "If-Match": '"8"' }),
       }),

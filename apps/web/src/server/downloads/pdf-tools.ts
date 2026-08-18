@@ -19,8 +19,14 @@ const MAX_PAGES = 5_000;
 export type PdfToolErrorCode = "invalid_pdf" | "processing_failed";
 
 export class PdfToolError extends Error {
-  constructor(readonly code: PdfToolErrorCode) {
-    super(code === "invalid_pdf" ? "Invalid PDF" : "PDF processing failed");
+  constructor(
+    readonly code: PdfToolErrorCode,
+    cause?: unknown,
+  ) {
+    super(
+      code === "invalid_pdf" ? "Invalid PDF" : "PDF processing failed",
+      cause === undefined ? undefined : { cause },
+    );
     this.name = "PdfToolError";
   }
 }
@@ -33,6 +39,10 @@ export function getPdfToolErrorCode(
     if (seen.has(value)) return undefined;
     seen.add(value);
     if (value instanceof PdfToolError) return value.code;
+    if (value instanceof Error && "cause" in value) {
+      const code = find(value.cause);
+      if (code) return code;
+    }
     if (value instanceof AggregateError && Array.isArray(value.errors)) {
       for (const nested of value.errors) {
         const code = find(nested);
@@ -70,7 +80,7 @@ function classify(error: unknown): Error {
   ) {
     return invalidPdf();
   }
-  return new PdfToolError("processing_failed");
+  return new PdfToolError("processing_failed", error);
 }
 
 type SpawnedProcess = Readonly<{

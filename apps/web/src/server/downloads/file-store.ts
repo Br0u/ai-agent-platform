@@ -28,7 +28,6 @@ const SOFTWARE_OBJECT_KEY = new RegExp(
   "u",
 );
 
-export type DownloadArtifactKind = "pdf" | "cover";
 export type DownloadStageExtension =
   | ".pdf"
   | ".webp"
@@ -47,12 +46,6 @@ type StageState = {
   extension: DownloadStageExtension;
 };
 
-type CommitInput = Readonly<{
-  resourceId: string;
-  revisionId: string;
-  kind: DownloadArtifactKind;
-}>;
-
 export type CommitArtifactInput = Readonly<{
   resourceId: string;
   revisionId: string;
@@ -68,12 +61,6 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 
 function validateUuid(value: string, label: string) {
   if (!UUID.test(value)) throw new Error(`Invalid ${label} ID`);
-}
-
-function extensionFor(kind: DownloadArtifactKind) {
-  if (kind === "pdf") return ".pdf";
-  if (kind === "cover") return ".webp";
-  throw new Error("Invalid artifact kind");
 }
 
 function isRecognizedExtension(
@@ -392,29 +379,6 @@ export function createDownloadFileStore(configuredRoot?: string) {
       const stage = Object.freeze({ path: stagePath, writable });
       stages.set(stage, { consumed: false, extension });
       return stage;
-    },
-
-    async commit(stage: DownloadStage, input: CommitInput) {
-      const state = takeStage(stage);
-      let extension: DownloadStageExtension;
-      try {
-        validateUuid(input.resourceId, "resource");
-        validateUuid(input.revisionId, "revision");
-        extension = extensionFor(input.kind);
-        if (state.extension !== extension) {
-          throw new Error("Stage extension does not match artifact kind");
-        }
-      } catch (error) {
-        return discardAndThrow(stage, error);
-      }
-      return await commitStage(
-        stage,
-        state,
-        input.resourceId,
-        input.revisionId,
-        extension,
-        `${input.revisionId}${extension}`,
-      );
     },
 
     async commitArtifact(stage: DownloadStage, input: CommitArtifactInput) {

@@ -3,7 +3,7 @@ import {
   artifactErrorResponse,
   artifactResponse,
   parseSingleByteRange,
-} from "@/server/downloads/pdf-response";
+} from "@/server/downloads/artifact-response";
 import { downloadResourceService } from "@/server/downloads/service";
 
 const UUID =
@@ -31,7 +31,7 @@ async function serve(
     const resourceId = (await context.params).resourceId;
     if (!resourceId || !UUID.test(resourceId))
       return artifactErrorResponse(request, 404, "not_found");
-    let artifact = await downloadResourceService.getAdminDraftArtifact(
+    let artifact = await downloadResourceService.openAdminDraftArtifact(
       resourceId,
       "cover",
     );
@@ -42,7 +42,7 @@ async function serve(
     );
     if (range && range !== "invalid") {
       artifact.readable.destroy();
-      artifact = await downloadResourceService.getAdminDraftArtifact(
+      artifact = await downloadResourceService.openAdminDraftArtifact(
         resourceId,
         "cover",
         range,
@@ -55,7 +55,6 @@ async function serve(
       contentType: "image/webp",
       filename: "cover.webp",
       disposition: "inline",
-      noStore: true,
     });
   } catch (caught) {
     return error(request, caught);

@@ -672,9 +672,37 @@ describe("typed download artifact lifecycle", () => {
     ];
     wiring.openSize = 9;
     await expect(
-      downloadResourceService.getPublicArtifact(value.key, "preview"),
+      downloadResourceService.openPublishedArtifact(
+        value.key,
+        "document",
+        undefined,
+        "preview",
+      ),
     ).resolves.toBeNull();
     expect(wiring.readable.destroy).toHaveBeenCalledOnce();
+  });
+  it("opens only intact published installers for their explicit slot", async () => {
+    const value = resource("software", [], "published");
+    const published = value.publishedRevision!;
+    published.artifacts = [
+      artifact(published.id, "windows", "objects/windows-release"),
+    ];
+
+    await expect(
+      downloadResourceService.openPublishedArtifact(value.key, "windows"),
+    ).resolves.toMatchObject({
+      filename: "file.zip",
+      mediaType: "application/zip",
+      byteSize: 20,
+    });
+    await expect(
+      downloadResourceService.openPublishedArtifact(value.key, "macos"),
+    ).resolves.toBeNull();
+
+    wiring.files.delete("objects/windows-release");
+    await expect(
+      downloadResourceService.openPublishedArtifact(value.key, "windows"),
+    ).resolves.toBeNull();
   });
   it.each([
     { name: "valid document", mutate: () => undefined, publishes: true },
@@ -781,7 +809,7 @@ describe("typed download artifact lifecycle", () => {
           macos: {
             filename: "file.zip",
             byteSize: 20,
-            downloadUrl: `/api/v1/downloads/${software.key}/macos`,
+            downloadUrl: `/api/v1/downloads/${software.key}/download/macos`,
           },
         },
         updatedAt: now.toISOString(),
