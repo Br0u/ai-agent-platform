@@ -256,6 +256,76 @@ describe("bounded artifact multipart upload", () => {
     expect(await stagingEntries(root)).toEqual([]);
   });
 
+  it("maps ENOSPC from stage creation and sampling while removing the stage", async () => {
+    const createEnospc = Object.assign(new Error("disk full"), {
+      code: "ENOSPC",
+    });
+    const unavailableStore: ArtifactUploadFileStore = {
+      createStage: vi.fn().mockRejectedValue(createEnospc),
+    };
+    const createError = await readBoundedArtifactUploadMultipart(
+      request(multipartBody(filePart({}))),
+      unavailableStore,
+      "document",
+    ).catch((error: unknown) => error);
+    expect(artifactUploadErrorCode(createError)).toBe("insufficient_storage");
+
+    const samplingFailure = await temporaryStore();
+    const originalCreateStage = samplingFailure.store.createStage.bind(
+      samplingFailure.store,
+    );
+    const sampleEnospc = Object.assign(new Error("disk full"), {
+      code: "ENOSPC",
+    });
+    const close = vi.fn<() => Promise<void>>();
+    vi.spyOn(samplingFailure.store, "createStage").mockImplementation(
+      async (extension) => {
+        const stage = await originalCreateStage(extension);
+        const originalClose = stage.writable.close.bind(stage.writable);
+        close.mockImplementation(originalClose);
+        vi.spyOn(stage.writable, "close").mockImplementation(close);
+        vi.spyOn(stage.writable, "read").mockRejectedValueOnce(sampleEnospc);
+        return stage;
+      },
+    );
+    const sampleError = await readBoundedArtifactUploadMultipart(
+      request(multipartBody(filePart({}))),
+      samplingFailure.store,
+      "document",
+    ).catch((error: unknown) => error);
+    expect(artifactUploadErrorCode(sampleError)).toBe("insufficient_storage");
+    expect(close).toHaveBeenCalledOnce();
+    expect(await stagingEntries(samplingFailure.root)).toEqual([]);
+  });
+
+  it("maps ENOSPC from cleanup without replacing a signature mismatch", async () => {
+    const { root, store } = await temporaryStore();
+    const originalCreateStage = store.createStage.bind(store);
+    const cleanupEnospc = Object.assign(new Error("disk full"), {
+      code: "ENOSPC",
+    });
+    const close = vi.fn<() => Promise<void>>().mockRejectedValue(cleanupEnospc);
+    vi.spyOn(store, "createStage").mockImplementation(async (extension) => {
+      const stage = await originalCreateStage(extension);
+      vi.spyOn(stage.writable, "close").mockImplementation(close);
+      return stage;
+    });
+
+    const result = await readBoundedArtifactUploadMultipart(
+      request(
+        multipartBody(
+          filePart({ filename: "manual.pdf", value: Buffer.from("not a PDF") }),
+        ),
+      ),
+      store,
+      "document",
+    ).catch((error: unknown) => error);
+
+    expect(artifactUploadErrorCode(result)).toBe("insufficient_storage");
+    expect(close).toHaveBeenCalledOnce();
+    expect(await stagingEntries(root)).toEqual([]);
+  });
+
   it("enforces the document and installer limits without trusting Content-Length", async () => {
     const document = await temporaryStore();
     await expect(
@@ -283,6 +353,42 @@ describe("bounded artifact multipart upload", () => {
     expect(await stagingEntries(document.root)).toEqual([]);
     expect(await stagingEntries(installer.root)).toEqual([]);
   });
+
+  it.each([
+    ["document", "manual.pdf", PDF, "document", "maxDocumentBytes"],
+    ["installer", "manual.exe", EXE, "windows", "maxInstallerBytes"],
+  ] as const)(
+    "accepts %s exactly at its limit and rejects one byte over",
+    async (_name, filename, value, slot, limitName) => {
+      const exact = await temporaryStore();
+      const limits = { [limitName]: value.byteLength };
+      const accepted = await readBoundedArtifactUploadMultipart(
+        request(multipartBody(filePart({ filename, value }))),
+        exact.store,
+        slot,
+        limits,
+      );
+      await discardSuccessfulStage(accepted);
+
+      const overflow = await temporaryStore();
+      await expect(
+        readBoundedArtifactUploadMultipart(
+          request(
+            multipartBody(
+              filePart({
+                filename,
+                value: Buffer.concat([value, Buffer.from("x")]),
+              }),
+            ),
+          ),
+          overflow.store,
+          slot,
+          limits,
+        ),
+      ).rejects.toMatchObject({ code: "file_too_large" });
+      expect(await stagingEntries(overflow.root)).toEqual([]);
+    },
+  );
 
   it("rejects malformed and truncated multipart streams and cancels an aborted upload", async () => {
     const malformed = await temporaryStore();
@@ -324,6 +430,195 @@ describe("bounded artifact multipart upload", () => {
     await expect(upload).rejects.toMatchObject({ code: "invalid_multipart" });
     expect(cancel).toHaveBeenCalledOnce();
     expect(await stagingEntries(aborted.root)).toEqual([]);
+  });
+
+  it("rejects a multipart body with no file and leaves no stage", async () => {
+    const { root, store } = await temporaryStore();
+    await expect(
+      readBoundedArtifactUploadMultipart(
+        request(multipartBody()),
+        store,
+        "document",
+      ),
+    ).rejects.toMatchObject({ code: "invalid_file" });
+    expect(await stagingEntries(root)).toEqual([]);
+  });
+
+  it("closes and removes an active stage when the request aborts during a write", async () => {
+    const { root, store } = await temporaryStore();
+    const requestAbort = new AbortController();
+    let bodyController!: ReadableStreamDefaultController<Uint8Array>;
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        bodyController = controller;
+      },
+      cancel,
+    });
+    const originalCreateStage = store.createStage.bind(store);
+    const close = vi.fn<() => Promise<void>>();
+    let writes = 0;
+    let releaseWrite!: () => void;
+    const writeBlocked = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    vi.spyOn(store, "createStage").mockImplementation(async (extension) => {
+      const stage = await originalCreateStage(extension);
+      const originalClose = stage.writable.close.bind(stage.writable);
+      close.mockImplementation(originalClose);
+      vi.spyOn(stage.writable, "close").mockImplementation(close);
+      const originalWrite = stage.writable.write.bind(stage.writable);
+      vi.spyOn(stage.writable, "write").mockImplementation(async (buffer) => {
+        writes += 1;
+        await writeBlocked;
+        return await originalWrite(buffer);
+      });
+      return stage;
+    });
+
+    const upload = readBoundedArtifactUploadMultipart(
+      request(body, {}, requestAbort.signal),
+      store,
+      "document",
+    );
+    bodyController.enqueue(
+      filePart({ value: Buffer.concat([PDF, Buffer.alloc(128 * 1024)]) }),
+    );
+    while (writes === 0) await delay(1);
+    requestAbort.abort();
+    releaseWrite();
+
+    await expect(upload).rejects.toMatchObject({ code: "invalid_multipart" });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+    expect(await stagingEntries(root)).toEqual([]);
+  });
+
+  it("cleans up exactly once on active source and stage-write I/O failures", async () => {
+    const sourceFailure = await temporaryStore();
+    let sourceController!: ReadableStreamDefaultController<Uint8Array>;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        sourceController = controller;
+      },
+    });
+    const sourceCreateStage = sourceFailure.store.createStage.bind(
+      sourceFailure.store,
+    );
+    const sourceClose = vi.fn<() => Promise<void>>();
+    let sourceWrites = 0;
+    let releaseSourceWrite!: () => void;
+    const sourceWriteBlocked = new Promise<void>((resolve) => {
+      releaseSourceWrite = resolve;
+    });
+    vi.spyOn(sourceFailure.store, "createStage").mockImplementation(
+      async (extension) => {
+        const stage = await sourceCreateStage(extension);
+        const originalClose = stage.writable.close.bind(stage.writable);
+        sourceClose.mockImplementation(originalClose);
+        vi.spyOn(stage.writable, "close").mockImplementation(sourceClose);
+        const originalWrite = stage.writable.write.bind(stage.writable);
+        vi.spyOn(stage.writable, "write").mockImplementation(async (buffer) => {
+          sourceWrites += 1;
+          await sourceWriteBlocked;
+          return await originalWrite(buffer);
+        });
+        return stage;
+      },
+    );
+    const sourceUpload = readBoundedArtifactUploadMultipart(
+      request(source),
+      sourceFailure.store,
+      "document",
+    );
+    sourceController.enqueue(
+      filePart({ value: Buffer.concat([PDF, Buffer.alloc(64 * 1024)]) }),
+    );
+    while (sourceWrites === 0) await delay(1);
+    sourceController.error(new Error("injected source failure"));
+    releaseSourceWrite();
+    await expect(sourceUpload).rejects.toMatchObject({
+      code: "invalid_multipart",
+    });
+    expect(sourceClose).toHaveBeenCalledOnce();
+    expect(await stagingEntries(sourceFailure.root)).toEqual([]);
+
+    const writeFailure = await temporaryStore();
+    const writeCreateStage = writeFailure.store.createStage.bind(
+      writeFailure.store,
+    );
+    const writeEnospc = Object.assign(new Error("disk full"), {
+      code: "ENOSPC",
+    });
+    const writeClose = vi.fn<() => Promise<void>>();
+    vi.spyOn(writeFailure.store, "createStage").mockImplementation(
+      async (extension) => {
+        const stage = await writeCreateStage(extension);
+        const originalClose = stage.writable.close.bind(stage.writable);
+        writeClose.mockImplementation(originalClose);
+        vi.spyOn(stage.writable, "close").mockImplementation(writeClose);
+        vi.spyOn(stage.writable, "write").mockRejectedValue(writeEnospc);
+        return stage;
+      },
+    );
+    const writeError = await readBoundedArtifactUploadMultipart(
+      request(multipartBody(filePart({}))),
+      writeFailure.store,
+      "document",
+    ).catch((error: unknown) => error);
+    expect(artifactUploadErrorCode(writeError)).toBe("insufficient_storage");
+    expect(writeClose).toHaveBeenCalledOnce();
+    expect(await stagingEntries(writeFailure.root)).toEqual([]);
+  });
+
+  it("completes bounded partial reads for the exact final 512-byte tail", async () => {
+    const { store } = await temporaryStore();
+    const originalCreateStage = store.createStage.bind(store);
+    const reads: Array<{ length: number; position: number | null }> = [];
+    vi.spyOn(store, "createStage").mockImplementation(async (extension) => {
+      const stage = await originalCreateStage(extension);
+      const originalRead = stage.writable.read.bind(stage.writable);
+      vi.spyOn(stage.writable, "read").mockImplementation((async (
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number | null,
+      ) => {
+        reads.push({ length, position });
+        return await originalRead(
+          buffer,
+          offset,
+          Math.min(length, 19),
+          position,
+        );
+      }) as never);
+      return stage;
+    });
+
+    const result = await readBoundedArtifactUploadMultipart(
+      request(
+        multipartBody(filePart({ filename: "installer.dmg", value: DMG })),
+      ),
+      store,
+      "macos",
+    );
+
+    const tailStart = DMG.byteLength - 512;
+    const initialTailRead = reads.findIndex(
+      ({ length, position }) => length === 512 && position === tailStart,
+    );
+    expect(initialTailRead).toBeGreaterThanOrEqual(0);
+    const tailReads = reads.slice(initialTailRead);
+    expect(tailReads[0]).toEqual({
+      length: 512,
+      position: tailStart,
+    });
+    const finalTailRead = tailReads.at(-1);
+    expect(finalTailRead).toBeDefined();
+    expect(finalTailRead!.position! + finalTailRead!.length).toBe(
+      DMG.byteLength,
+    );
+    await discardSuccessfulStage(result);
   });
 
   it("waits for stage writes before reading an unbounded request body", async () => {

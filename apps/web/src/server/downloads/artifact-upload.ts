@@ -206,14 +206,21 @@ async function artifactSamples(stage: DownloadStage, byteSize: number) {
   if (!stats.isFile() || stats.size !== byteSize) throw error("invalid_file");
   const prefix = Buffer.alloc(Math.min(SAMPLE_BYTES, byteSize));
   const suffix = Buffer.alloc(Math.min(SAMPLE_BYTES, byteSize));
-  if (prefix.byteLength > 0) {
-    await stage.writable.read(prefix, 0, prefix.byteLength, 0);
-    await stage.writable.read(
-      suffix,
-      0,
-      suffix.byteLength,
-      byteSize - suffix.byteLength,
-    );
+  for (const [sample, position] of [
+    [prefix, 0],
+    [suffix, byteSize - suffix.byteLength],
+  ] as const) {
+    let offset = 0;
+    while (offset < sample.byteLength) {
+      const { bytesRead } = await stage.writable.read(
+        sample,
+        offset,
+        sample.byteLength - offset,
+        position + offset,
+      );
+      if (bytesRead === 0) throw error("invalid_file");
+      offset += bytesRead;
+    }
   }
   return { prefix, suffix };
 }
@@ -378,8 +385,12 @@ export async function readBoundedArtifactUploadMultipart(
           filename: originalName,
           ...(await artifactSamples(rawStage, file.byteSize)),
         });
-      } catch {
-        fail(error("invalid_file"));
+      } catch (caught) {
+        fail(
+          caught instanceof ArtifactUploadError
+            ? caught
+            : new ArtifactUploadError("invalid_file", caught),
+        );
         return;
       }
       if (settled) return;
