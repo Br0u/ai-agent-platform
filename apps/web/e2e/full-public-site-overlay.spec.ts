@@ -170,10 +170,7 @@ test("桌面 Header 与 390px 移动导航执行 V2 公开入口", async ({ page
     "href",
     "/contact",
   );
-  await expect(page.locator(".site-actions > .site-trial")).toHaveAttribute(
-    "href",
-    "/trial",
-  );
+  await expect(page.locator(".site-actions > .site-trial")).toHaveCount(0);
   await expect(
     page.getByRole("banner").getByRole("link", { name: /登录/u }),
   ).toHaveCount(0);
@@ -214,9 +211,43 @@ test("桌面 Header 与 390px 移动导航执行 V2 公开入口", async ({ page
   ).toHaveAttribute("href", "/contact");
   await expect(
     drawer.getByRole("link", { name: "申请体验", exact: true }),
-  ).toHaveAttribute("href", "/trial");
+  ).toHaveCount(0);
   await expect(drawer.getByRole("link", { name: /登录/u })).toHaveCount(0);
   await expect(drawer.getByRole("link", { name: "文档" })).toHaveCount(0);
+});
+
+test("公开入口隐藏申请体验但保留 trial、官网咨询和 Agent", async ({ page }) => {
+  test.setTimeout(120_000);
+  for (const [, href] of prototypePages) {
+    await gotoPublicPage(page, href);
+    await expect(
+      page.getByRole("link", { name: "申请体验", exact: true }),
+      href,
+    ).toHaveCount(0);
+  }
+
+  await gotoPublicPage(page, "/");
+  const actions = page.locator(".home-hero .home-actions");
+  await expect(actions.getByRole("link")).toHaveText([
+    "查看解决方案",
+    "联系我们",
+  ]);
+  await expect(actions.getByRole("link", { name: "联系我们" })).toHaveAttribute(
+    "href",
+    "/contact?topic=官网咨询",
+  );
+  const launcher = page.getByRole("button", { name: "打开码多多" });
+  await launcher.click();
+  await expect(page.getByRole("dialog", { name: "码多多" })).toBeVisible();
+
+  await gotoPublicPage(page, "/contact?topic=官网咨询");
+  await expect(page.getByText("当前咨询主题：官网咨询")).toBeVisible();
+  await gotoPublicPage(page, "/trial");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "开启企业 AI 落地体验" }),
+  ).toBeVisible();
+  await gotoPublicPage(page, "/assistant");
+  await expect(page.getByRole("main", { name: "码多多工作区" })).toBeVisible();
 });
 
 test("全站公开页 Navbar 与 Product 保持同一尺寸和 Logo", async ({ page }) => {
@@ -429,14 +460,20 @@ test("15 个 partner key 均由 query 与 hash 对应的真实目标承接", asy
   }
 });
 
-test("22 个 download key 均由真实资源锚点承接", async ({ page }) => {
+test("默认公开下载资源均由真实锚点承接，未上传客户端不显示", async ({
+  page,
+}) => {
   test.setTimeout(120_000);
-  for (const key of downloadKeys) {
+  for (const key of downloadKeys.filter((key) => key !== "mdd2-client")) {
     await gotoPublicPage(page, `/downloads#dl-${key}`);
     const resource = page.locator(`[data-download-key="${key}"]`);
     await expect(resource).toHaveCount(1);
     await expect(resource).toBeVisible();
   }
+  await gotoPublicPage(page, "/downloads");
+  await expect(page.locator('[data-download-key="mdd2-client"]')).toHaveCount(
+    0,
+  );
 });
 
 test("原型外公开路由全部返回 404", async ({ request }) => {
