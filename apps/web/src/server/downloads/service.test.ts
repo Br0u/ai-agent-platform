@@ -563,6 +563,35 @@ describe("typed download artifact lifecycle", () => {
     ]);
     expect(wiring.files.has("objects/old")).toBe(false);
   });
+  it.each([
+    {
+      resourceKind: "document" as const,
+      input: (id: string) => upload(id),
+    },
+    {
+      resourceKind: "software" as const,
+      input: (id: string) => ({
+        ...upload(id),
+        slot: "document" as const,
+        originalFilename: "guide.pdf",
+        extension: ".pdf" as const,
+        mediaType: "application/pdf",
+        pageCount: 1,
+        coverStage: {},
+      }),
+    },
+  ])(
+    "rejects $resourceKind resource slot mismatch and compensates committed objects",
+    async ({ resourceKind, input }) => {
+      const value = resource(resourceKind);
+      await expect(
+        downloadResourceService.attachUploadedArtifact(input(value.id)),
+      ).rejects.toThrow("DOWNLOAD_RESOURCE_ARTIFACT_SLOT_MISMATCH");
+      expect(
+        [...wiring.files.keys()].some((key) => key.includes(value.id)),
+      ).toBe(false);
+    },
+  );
   it("compensates new objects only for a rolled-back business mutation", async () => {
     const value = resource("software", [
       artifact("old", "windows", "objects/old"),

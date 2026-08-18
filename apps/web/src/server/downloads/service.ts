@@ -592,7 +592,7 @@ export const downloadResourceService = {
               ? input.slot !== "document"
               : input.slot === "document"
           )
-            throw new Error("DOWNLOAD_RESOURCE_INPUT_INVALID:slot");
+            throw new Error("DOWNLOAD_RESOURCE_ARTIFACT_SLOT_MISMATCH");
           const previousDraft = current.draftRevision;
           if (!previousDraft)
             throw new Error("DOWNLOAD_RESOURCE_UPLOAD_REQUIRES_DRAFT");
@@ -658,7 +658,10 @@ export const downloadResourceService = {
               context,
             ),
           );
-          const dto = await typedAdminDto(resource);
+          const dto =
+            resource.kind === "document"
+              ? await adminDto(resource)
+              : await typedAdminDto(resource);
           throwIfAborted(signal);
           return { dto, resource, pending };
         },

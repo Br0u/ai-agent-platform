@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import { stat, unlink, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { tmpdir } from "node:os";
 
 const wiring = vi.hoisted(() => ({
   trust: vi.fn(),
@@ -18,7 +22,7 @@ const wiring = vi.hoisted(() => ({
     writable: { close: vi.fn(async () => undefined) },
   })),
   derive: vi.fn(),
-  attach: vi.fn(async () => ({ resource: { id: "resource" } })),
+  attach: vi.fn(async () => ({ dto: uploadDto })),
   cancel: vi.fn(async () => undefined),
 }));
 
@@ -55,8 +59,41 @@ vi.mock("@/server/downloads/service", () => ({
 }));
 
 import { ArtifactUploadError } from "@/server/downloads/artifact-upload";
+import { AuthAccessError } from "@/server/auth/access";
+import { downloadResourceAdminDtoSchema } from "@/server/downloads/contracts";
 import { PdfToolError } from "@/server/downloads/pdf-tools";
+import { MutationRequestError } from "@/server/http/require-trusted-mutation";
 import { POST } from "./route";
+
+const uploadDto = {
+  id: "11111111-1111-4111-8111-111111111111",
+  key: "resource",
+  adminLabel: "Resource",
+  state: "unpublished",
+  adminStatus: "待发布",
+  rowVersion: 3,
+  publishedRevision: null,
+  draftRevision: {
+    id: "11111111-1111-4111-8111-111111111112",
+    name: "Resource",
+    product: "Platform",
+    category: "materials",
+    resourceType: "PDF",
+    description: "Download",
+    sortOrder: 0,
+    previewPolicy: "public",
+    downloadPolicy: "contact",
+    pdfObjectKey: "objects/private.pdf",
+    coverObjectKey: "objects/private.webp",
+    pageCount: 1,
+    byteSize: 12,
+    sha256: "a".repeat(64),
+    createdAt: "2026-08-18T00:00:00.000Z",
+    publishedAt: null,
+  },
+  createdAt: "2026-08-18T00:00:00.000Z",
+  updatedAt: "2026-08-18T00:00:01.000Z",
+};
 
 const params = (slot: string) => ({
   params: Promise.resolve({
@@ -65,14 +102,19 @@ const params = (slot: string) => ({
   }),
 });
 
-function request() {
+function request(
+  ifMatch: string | null = '"2"',
+  contentType = "multipart/form-data; boundary=abc",
+  signal?: AbortSignal,
+) {
   return new Request("https://example.test", {
     method: "POST",
     headers: {
       origin: "https://example.test",
-      "content-type": "multipart/form-data; boundary=abc",
-      "if-match": '"2"',
+      "content-type": contentType,
+      ...(ifMatch === null ? {} : { "if-match": ifMatch }),
     },
+    signal,
   });
 }
 
@@ -107,6 +149,36 @@ describe("slot-aware admin download upload", () => {
       expect.any(AbortSignal),
     );
     expect(wiring.derive).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      resource: uploadDto,
+    });
+  });
+
+  it("returns the exact legacy manager DTO with its new row version", async () => {
+    wiring.read.mockResolvedValueOnce({
+      stage: {} as never,
+      byteSize: 12,
+      sha256: "a".repeat(64),
+      originalName: "guide.pdf",
+      extension: ".pdf" as never,
+      mediaType: "application/pdf",
+    });
+    wiring.derive.mockResolvedValueOnce({
+      pageCount: 1,
+      stagedCover: {
+        path: "/tmp/cover",
+        writable: { close: vi.fn(async () => undefined) },
+      },
+    });
+    const response = await POST(request(), params("document"));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(
+      downloadResourceAdminDtoSchema.safeParse(body.resource),
+    ).toMatchObject({
+      success: true,
+    });
+    expect(body).toMatchObject({ resource: { rowVersion: 3 } });
   });
 
   it("uses PDF processing only for the document slot", async () => {
@@ -187,5 +259,178 @@ describe("slot-aware admin download upload", () => {
       ]),
     );
     expect((await POST(request(), params("windows"))).status).toBe(507);
+  });
+
+  it.each([null, "1", '"abc"', '"0"', '"1,2"', "*", '"9007199254740992"'])(
+    "rejects malformed If-Match %s before reading",
+    async (ifMatch) => {
+      const response = await POST(request(ifMatch), params("windows"));
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: "invalid_input" },
+      });
+      expect(wiring.read).not.toHaveBeenCalled();
+    },
+  );
+
+  it("runs trusted mutation, permission, then parser and maps stable guard/auth/CAS errors", async () => {
+    const order: string[] = [];
+    wiring.trust.mockImplementationOnce(() => order.push("guard"));
+    wiring.allow.mockImplementationOnce(async () => {
+      order.push("permission");
+      return { userId: "11111111-1111-4111-8111-111111111111" };
+    });
+    wiring.read.mockImplementationOnce(async () => {
+      order.push("parser");
+      return {
+        stage: {} as never,
+        byteSize: 12,
+        sha256: "a".repeat(64),
+        originalName: "installer.exe",
+        extension: ".exe" as const,
+        mediaType: "application/vnd.microsoft.portable-executable",
+      };
+    });
+    await POST(request(), params("windows"));
+    expect(order).toEqual(["guard", "permission", "parser"]);
+
+    wiring.allow.mockRejectedValueOnce(
+      new AuthAccessError("AUTH_SESSION_REQUIRED", 401),
+    );
+    const unauthenticated = await POST(request(), params("windows"));
+    expect(unauthenticated.status).toBe(401);
+    await expect(unauthenticated.json()).resolves.toMatchObject({
+      error: { code: "authentication_required" },
+    });
+    wiring.allow.mockRejectedValueOnce(
+      new AuthAccessError("AUTH_PERMISSION_DENIED", 403),
+    );
+    const denied = await POST(request(), params("windows"));
+    expect(denied.status).toBe(403);
+    await expect(denied.json()).resolves.toMatchObject({
+      error: { code: "permission_denied" },
+    });
+    wiring.trust.mockImplementationOnce(() => {
+      throw new MutationRequestError();
+    });
+    const rejected = await POST(request(), params("windows"));
+    expect(rejected.status).toBe(403);
+    await expect(rejected.json()).resolves.toMatchObject({
+      error: { code: "mutation_rejected" },
+    });
+    wiring.trust.mockImplementationOnce(() => {
+      throw new MutationRequestError();
+    });
+    const unsupported = await POST(
+      request('"2"', "text/plain"),
+      params("windows"),
+    );
+    expect(unsupported.status).toBe(415);
+    await expect(unsupported.json()).resolves.toMatchObject({
+      error: { code: "unsupported_media_type" },
+    });
+    wiring.attach.mockRejectedValueOnce(
+      new Error("DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT"),
+    );
+    const conflict = await POST(request(), params("windows"));
+    expect(conflict.status).toBe(409);
+    await expect(conflict.json()).resolves.toMatchObject({
+      error: { code: "state_conflict" },
+    });
+  });
+
+  it.each(["document", "windows"] as const)(
+    "maps a resource-kind mismatch for %s to invalid_file",
+    async (slot) => {
+      if (slot === "document") {
+        wiring.read.mockResolvedValueOnce({
+          stage: {} as never,
+          byteSize: 12,
+          sha256: "a".repeat(64),
+          originalName: "guide.pdf",
+          extension: ".pdf" as never,
+          mediaType: "application/pdf",
+        });
+        wiring.derive.mockResolvedValueOnce({
+          pageCount: 1,
+          stagedCover: {
+            path: "/tmp/cover",
+            writable: { close: vi.fn(async () => undefined) },
+          },
+        });
+      }
+      wiring.attach.mockRejectedValueOnce(
+        new Error("DOWNLOAD_RESOURCE_ARTIFACT_SLOT_MISMATCH"),
+      );
+      const response = await POST(request(), params(slot));
+      expect(response.status).toBe(422);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: "invalid_file" },
+      });
+    },
+  );
+
+  it("cleans both stages after PDF derivation abort and conceals cleanup failure", async () => {
+    const controller = new AbortController();
+    const pdfPath = path.join(tmpdir(), `upload-${randomUUID()}`);
+    const coverPath = path.join(tmpdir(), `cover-${randomUUID()}`);
+    await Promise.all([
+      writeFile(pdfPath, "pdf"),
+      writeFile(coverPath, "cover"),
+    ]);
+    wiring.take.mockImplementationOnce(() => ({
+      path: pdfPath,
+      writable: { close: vi.fn(async () => undefined) },
+    }));
+    wiring.read.mockResolvedValueOnce({
+      stage: {} as never,
+      byteSize: 12,
+      sha256: "a".repeat(64),
+      originalName: "guide.pdf",
+      extension: ".pdf" as never,
+      mediaType: "application/pdf",
+    });
+    wiring.derive.mockImplementationOnce(async () => {
+      controller.abort();
+      return {
+        pageCount: 1,
+        stagedCover: {
+          path: coverPath,
+          writable: { close: vi.fn(async () => undefined) },
+        },
+      };
+    });
+    try {
+      const response = await POST(
+        request('"2"', "multipart/form-data; boundary=abc", controller.signal),
+        params("document"),
+      );
+      expect(response.status).toBe(500);
+      expect(wiring.attach).not.toHaveBeenCalled();
+      await expect(stat(pdfPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(coverPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await Promise.all([
+        unlink(pdfPath).catch(() => undefined),
+        unlink(coverPath).catch(() => undefined),
+      ]);
+    }
+
+    wiring.take.mockImplementationOnce(() => ({
+      path: "/tmp/missing-stage",
+      writable: {
+        close: vi.fn(async () => {
+          throw new Error("private");
+        }),
+      },
+    }));
+    wiring.attach.mockRejectedValueOnce(
+      new ArtifactUploadError("invalid_file"),
+    );
+    const cleanup = await POST(request(), params("windows"));
+    expect(cleanup.status).toBe(500);
+    await expect(cleanup.json()).resolves.toMatchObject({
+      error: { code: "internal_error" },
+    });
   });
 });

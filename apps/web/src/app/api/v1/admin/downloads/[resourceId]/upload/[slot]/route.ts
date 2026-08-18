@@ -105,6 +105,11 @@ function statusFor(error: unknown, request: Request) {
     return [422, "invalid_file"] as const;
   if (
     error instanceof Error &&
+    error.message === "DOWNLOAD_RESOURCE_ARTIFACT_SLOT_MISMATCH"
+  )
+    return [422, "invalid_file"] as const;
+  if (
+    error instanceof Error &&
     /^(?:DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT|DOWNLOAD_RESOURCE_UPLOAD_REQUIRES_DRAFT|DOWNLOAD_RESOURCE_NOT_FOUND)$/.test(
       error.message,
     )
@@ -177,7 +182,7 @@ export async function POST(
     stage = undefined;
     coverStage = undefined;
     response = Response.json(
-      { version: "1", requestId: id, resource: attached.resource },
+      { version: "1", requestId: id, resource: attached.dto },
       { status: 200, headers: NO_STORE },
     );
   } catch (error) {
