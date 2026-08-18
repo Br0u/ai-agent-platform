@@ -343,7 +343,7 @@ describe("download resource contracts", () => {
       kind: "software",
       releaseVersion: "v2.0.0",
     });
-    for (const releaseVersion of [" ", "v2\n.0.0"]) {
+    for (const releaseVersion of [" ", "\nv2.0.0", "v2.0.0\t", "v2\n.0.0"]) {
       expect(
         typedSaveDownloadDraftInputSchema.safeParse({
           ...softwareDraft,
@@ -408,6 +408,12 @@ describe("download resource contracts", () => {
         ],
       },
     });
+    expect(
+      typedDownloadResourceAdminDtoSchema.safeParse({
+        ...dto,
+        rowVersion: "1",
+      }).success,
+    ).toBe(false);
   });
 
   it("keeps document public fields and exposes only public software artifacts", () => {

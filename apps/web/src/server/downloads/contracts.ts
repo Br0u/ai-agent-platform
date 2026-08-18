@@ -39,10 +39,10 @@ const policySchema = z.enum(DOWNLOAD_RESOURCE_POLICIES);
 export const artifactSlotSchema = z.enum(["document", "windows", "macos"]);
 export const releaseVersionSchema = z
   .string()
+  .refine((value) => !/[\u0000-\u001f\u007f]/u.test(value))
   .trim()
   .min(1)
-  .max(40)
-  .refine((value) => !/[\u0000-\u001f\u007f]/u.test(value));
+  .max(40);
 
 const draftMetadataSchema = z
   .object({
@@ -332,7 +332,7 @@ const typedAdminResourceBaseSchema = z
     adminLabel: adminLabelSchema,
     state: z.enum(DOWNLOAD_RESOURCE_STATES),
     adminStatus: z.enum(DOWNLOAD_RESOURCE_ADMIN_STATUSES),
-    rowVersion: rowVersionSchema,
+    rowVersion: z.number().int().positive(),
     createdAt: z.string().datetime({ offset: true }),
     updatedAt: z.string().datetime({ offset: true }),
   })
