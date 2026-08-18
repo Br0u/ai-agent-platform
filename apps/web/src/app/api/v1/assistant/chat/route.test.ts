@@ -697,13 +697,13 @@ describe("POST /api/v1/assistant/chat", () => {
     ).not.toContain("internal-replayable-value");
   });
 
-  it("continues without page context or reading activity when page loading returns null", async () => {
+  it("fails closed before provider work when page loading returns null", async () => {
     const deps = dependencies();
     const streamingProvider = {
       reply: vi.fn(async () => providerSuccess),
-      async *streamReply() {
+      streamReply: vi.fn(async function* () {
         yield { type: "answer_delta" as const, content: "回答" };
-      },
+      }),
     };
     deps.resolveProvider.mockResolvedValue({
       provider: streamingProvider,
@@ -714,22 +714,19 @@ describe("POST /api/v1/assistant/chat", () => {
     const response = await createAssistantChatHandler(deps)(
       request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
     );
-    const body = await response.text();
-
-    expect(body).not.toContain('"type":"activity"');
-    expect(body).toContain('"type":"answer_delta"');
+    expect(response.status).toBe(503);
+    expect(deps.resolveProvider).not.toHaveBeenCalled();
+    expect(streamingProvider.streamReply).not.toHaveBeenCalled();
     expect(streamingProvider.reply).not.toHaveBeenCalled();
   });
 
-  it("downgrades a rejected page load to null without reading activity", async () => {
+  it("fails closed before provider work when page loading rejects", async () => {
     const deps = dependencies();
-    const invocations: unknown[] = [];
     const streamingProvider = {
       reply: vi.fn(async () => providerSuccess),
-      async *streamReply(invocation: unknown) {
-        invocations.push(invocation);
+      streamReply: vi.fn(async function* () {
         yield { type: "answer_delta" as const, content: "回答" };
-      },
+      }),
     };
     deps.resolveProvider.mockResolvedValue({
       provider: streamingProvider,
@@ -742,14 +739,9 @@ describe("POST /api/v1/assistant/chat", () => {
     const response = await createAssistantChatHandler(deps)(
       request(JSON.stringify({ message: "问题", context: { pathname: "/" } })),
     );
-    const body = await response.text();
-
-    expect(response.status).toBe(200);
-    expect(body).not.toContain('"type":"activity"');
-    expect(body).toContain('"type":"answer_delta"');
-    expect(invocations).toEqual([
-      expect.objectContaining({ pageContext: null }),
-    ]);
+    expect(response.status).toBe(503);
+    expect(deps.resolveProvider).not.toHaveBeenCalled();
+    expect(streamingProvider.streamReply).not.toHaveBeenCalled();
     expect(streamingProvider.reply).not.toHaveBeenCalled();
   });
 
@@ -832,6 +824,242 @@ describe("POST /api/v1/assistant/chat", () => {
 
     expect(body.indexOf('"type":"activity"')).toBeLessThan(
       body.indexOf('"type":"answer_delta"'),
+    );
+  });
+
+  it("loads an explicitly named linked public page for a site information question", async () => {
+    const deps = dependencies();
+    const streamingProvider = {
+      reply: vi.fn(async () => providerSuccess),
+      streamReply: vi.fn(async function* () {
+        yield { type: "answer_delta" as const, content: "回答" };
+      }),
+    };
+    deps.resolveProvider.mockResolvedValue({
+      provider: streamingProvider,
+      mode: "agentos",
+    });
+    const currentPage: PublicPageContext = {
+      pathname: "/solutions/finance-compliance",
+      search: "",
+      title: "贷款合规智能审查",
+      text: "当前方案正文",
+      links: [],
+    };
+    const linkedPage: PublicPageContext = {
+      pathname: "/downloads",
+      search: "",
+      title: "下载中心",
+      text: "码里奥桌面客户端支持 Windows 与 macOS。",
+      links: [],
+    };
+    deps.pageResolver.load
+      .mockResolvedValueOnce(currentPage)
+      .mockResolvedValueOnce(linkedPage);
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          message: "请自己在本站查找：下载中心目前有哪些软件资源？",
+          context: { pathname: "/solutions/finance-compliance" },
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("已读取站内页面");
+    expect(deps.pageResolver.load).toHaveBeenNthCalledWith(
+      2,
+      { pathname: "/downloads", search: "" },
+      expect.any(AbortSignal),
+    );
+    expect(streamingProvider.streamReply).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ pageContext: linkedPage }),
+    );
+  });
+
+  it("fails closed when an explicitly named linked public page is unavailable", async () => {
+    const deps = dependencies();
+    deps.pageResolver.load
+      .mockResolvedValueOnce({
+        pathname: "/solutions/finance-compliance",
+        search: "",
+        title: "贷款合规智能审查",
+        text: "当前方案正文",
+        links: [],
+      })
+      .mockResolvedValueOnce(null);
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          message: "请自己在本站查找：下载中心目前有哪些软件资源？",
+          context: { pathname: "/solutions/finance-compliance" },
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(503);
+    expect(deps.resolveProvider).not.toHaveBeenCalled();
+    expect(deps.provider.reply).not.toHaveBeenCalled();
+  });
+
+  it("keeps the current page for navigation requests so action matching still works", async () => {
+    const deps = dependencies();
+    const currentPage: PublicPageContext = {
+      pathname: "/solutions/finance-compliance",
+      search: "",
+      title: "贷款合规智能审查",
+      text: "当前方案正文",
+      links: [
+        {
+          label: "交易监测模型智能开发",
+          href: "/solutions/finance-aml",
+        },
+      ],
+    };
+    deps.pageResolver.load.mockResolvedValue(currentPage);
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          message: "打开交易监测模型智能开发",
+          context: { pathname: "/solutions/finance-compliance" },
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.pageResolver.load).toHaveBeenCalledOnce();
+    expect(deps.provider.reply).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ pageContext: currentPage }),
+    );
+  });
+
+  it("does not replace current-page context for an ordinary Skill invocation", async () => {
+    const deps = dependencies();
+    const currentPage: PublicPageContext = {
+      pathname: "/solutions/finance-compliance",
+      search: "",
+      title: "贷款合规智能审查",
+      text: "当前方案正文",
+      links: [],
+    };
+    deps.pageResolver.load.mockResolvedValue(currentPage);
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          message: "请使用你已启用的技能解释 GPU 和 NPU 的主要区别。",
+          context: { pathname: "/solutions/finance-compliance" },
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.pageResolver.load).toHaveBeenCalledOnce();
+    expect(deps.provider.reply).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ pageContext: currentPage }),
+    );
+  });
+
+  it("does not confuse the runtime Skill registry with the public Skill center", async () => {
+    const deps = dependencies();
+    const currentPage: PublicPageContext = {
+      pathname: "/solutions/finance-compliance",
+      search: "",
+      title: "贷款合规智能审查",
+      text: "当前方案正文",
+      links: [],
+    };
+    deps.pageResolver.load.mockResolvedValue(currentPage);
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          message: "技能库里有哪些技能？",
+          context: { pathname: "/solutions/finance-compliance" },
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.pageResolver.load).toHaveBeenCalledOnce();
+    expect(deps.provider.reply).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ pageContext: currentPage }),
+    );
+  });
+
+  it("still loads the public Skill center when it is named explicitly", async () => {
+    const deps = dependencies();
+    const currentPage: PublicPageContext = {
+      pathname: "/solutions/finance-compliance",
+      search: "",
+      title: "贷款合规智能审查",
+      text: "当前方案正文",
+      links: [],
+    };
+    const skillCenterPage: PublicPageContext = {
+      pathname: "/product/skills",
+      search: "",
+      title: "技能中心",
+      text: "公开产品技能中心正文",
+      links: [],
+    };
+    deps.pageResolver.load
+      .mockResolvedValueOnce(currentPage)
+      .mockResolvedValueOnce(skillCenterPage);
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          message: "请从网站查找：技能中心展示了什么？",
+          context: { pathname: "/solutions/finance-compliance" },
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.pageResolver.load).toHaveBeenNthCalledWith(
+      2,
+      { pathname: "/product/skills", search: "" },
+      expect.any(AbortSignal),
+    );
+    expect(deps.provider.reply).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ pageContext: skillCenterPage }),
+    );
+  });
+
+  it("uses the current solution directory instead of its redirecting parent route", async () => {
+    const deps = dependencies();
+    const currentPage: PublicPageContext = {
+      pathname: "/solutions/finance-compliance",
+      search: "",
+      title: "贷款合规智能审查",
+      text: "当前方案正文",
+      links: [
+        {
+          label: "交易监测模型智能开发",
+          href: "/solutions/finance-aml",
+        },
+        { label: "规章制度精准解析", href: "/solutions/railway-parse" },
+      ],
+    };
+    deps.pageResolver.load.mockResolvedValue(currentPage);
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          message: "你有哪些解决方案？请从网站页面里查找。",
+          context: { pathname: "/solutions/finance-compliance" },
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.pageResolver.load).toHaveBeenCalledOnce();
+    expect(deps.provider.reply).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ pageContext: currentPage }),
     );
   });
 

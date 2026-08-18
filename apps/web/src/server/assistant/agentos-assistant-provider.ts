@@ -6,6 +6,7 @@ import type {
   AssistantProviderInvocation,
   AssistantProviderReply,
 } from "./assistant-provider";
+import { isAssistantNavigationIntent } from "./assistant-provider";
 import { matchRoute } from "@/config/routes";
 import {
   AssistantContentFilter,
@@ -244,12 +245,10 @@ export class AgentOSAssistantProvider implements AssistantProvider {
   }
 }
 
-const NAVIGATION_INTENT = /(?:了解|查看|打开|前往|进入|跳转到|去)/u;
-
 function requestedNavigationPath(
   invocation: AssistantProviderInvocation,
 ): string | null {
-  if (!NAVIGATION_INTENT.test(invocation.request.message)) return null;
+  if (!isAssistantNavigationIntent(invocation.request.message)) return null;
   const compactMessage = invocation.request.message.replace(/\s+/gu, "");
   const matches = (invocation.pageContext?.links ?? [])
     .filter((link) => {
