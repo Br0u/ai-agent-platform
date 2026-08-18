@@ -205,6 +205,10 @@ run_nginx_check() {
       printf "%s %s HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 11534336\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n" \
         "$method" "$path" | nc -w 3 proxy 8080 2>/dev/null || true
     }
+    request_upstream() {
+      path=$1
+      wget -q -O /dev/null --header="Host: 127.0.0.1" --post-data=x "http://proxy:8080$path" || true
+    }
     assert_response() {
       response=$1
       expected=$2
@@ -218,6 +222,7 @@ run_nginx_check() {
     for slot in document windows macos; do
       valid=$(request POST "/api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload/$slot")
       assert_response "$valid" "100 Continue"
+      request_upstream "/api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload/$slot" >/dev/null
     done
     old_route=$(request POST /api/v1/admin/downloads/0191f2a3-4567-7abc-8def-0123456789ab/upload)
     assert_response "$old_route" "413 Request Entity Too Large"
@@ -228,6 +233,13 @@ run_nginx_check() {
     wrong_method=$(request PUT /api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload/windows)
     assert_response "$wrong_method" "403 Forbidden"
   '
+  for slot in document windows macos; do
+    if ! docker logs "$upstream" 2>&1 |
+      grep -F "POST /api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload/$slot HTTP/1.1" >/dev/null; then
+      printf '%s\n' "upstream request was not observed: $slot" >&2
+      exit 1
+    fi
+  done
   cleanup_nginx
   trap - EXIT INT TERM
 }
