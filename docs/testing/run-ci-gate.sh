@@ -207,7 +207,16 @@ run_nginx_check() {
     }
     request_upstream() {
       path=$1
-      wget -q -O /dev/null --header="Host: 127.0.0.1" --post-data=x "http://proxy:8080$path" || true
+      if response=$(wget -S -q -O /dev/null --header="Host: 127.0.0.1" --post-data=x "http://proxy:8080$path" 2>&1); then
+        printf '%s\n' "upstream upload probe unexpectedly succeeded: $path" >&2
+        return 1
+      fi
+      if printf '%s\n' "$response" | grep -F "HTTP/1.1 404 Not Found" >/dev/null; then
+        return 0
+      fi
+      printf '%s\n' "upstream upload probe failed: $path" >&2
+      printf '%s\n' "$response" >&2
+      return 1
     }
     assert_response() {
       response=$1
@@ -222,7 +231,7 @@ run_nginx_check() {
     for slot in document windows macos; do
       valid=$(request POST "/api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload/$slot")
       assert_response "$valid" "100 Continue"
-      request_upstream "/api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload/$slot" >/dev/null
+      request_upstream "/api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload/$slot?probe=body-$slot" >/dev/null
     done
     old_route=$(request POST /api/v1/admin/downloads/0191f2a3-4567-7abc-8def-0123456789ab/upload)
     assert_response "$old_route" "413 Request Entity Too Large"
@@ -235,7 +244,7 @@ run_nginx_check() {
   '
   for slot in document windows macos; do
     if ! docker logs "$upstream" 2>&1 |
-      grep -F "POST /api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload/$slot HTTP/1.1" >/dev/null; then
+      grep -F "POST /api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload/$slot?probe=body-$slot HTTP/1.1" >/dev/null; then
       printf '%s\n' "upstream request was not observed: $slot" >&2
       exit 1
     fi

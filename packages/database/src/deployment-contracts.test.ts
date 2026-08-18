@@ -1051,7 +1051,13 @@ describe("production deployment security contracts", () => {
     expect(gate).toContain("0191f2a3-4567-6abc-8def-0123456789ab");
     expect(gate).toContain("Expect: 100-continue");
     expect(gate).toContain("100 Continue");
-    expect(gate).toContain("--post-data=x");
+    const upstreamRequest = gate
+      .split("    request_upstream() {")[1]
+      ?.split("\n    }")[0];
+    expect(upstreamRequest).toContain("--post-data=x");
+    expect(upstreamRequest).toContain("wget -S -q -O /dev/null");
+    expect(upstreamRequest).not.toContain("|| true");
+    expect(gate).toContain("?probe=body-$slot");
     expect(gate).toContain('docker logs "$upstream"');
     expect(gate).toContain("upstream request was not observed");
     expect(gate).toContain("413 Request Entity Too Large");
