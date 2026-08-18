@@ -160,6 +160,25 @@ describe("AgentOSAssistantProvider", () => {
     });
   });
 
+  it("accepts Agno public content without relying on a model-generated marker", async () => {
+    const { provider } = fixture({
+      runAgentStream: vi.fn(async function* () {
+        yield { type: "activity" as const, phase: "analyzing" as const };
+        yield {
+          type: "answer_delta" as const,
+          content: "当前启用 ai-system-knowledge 技能。",
+        };
+      }),
+    });
+
+    await expect(
+      provider.reply({ request: assistantRequest, pageContext: null }),
+    ).resolves.toEqual({
+      content: "当前启用 ai-system-knowledge 技能。",
+      suggestedActions: [],
+    });
+  });
+
   it("filters reasoning tags and validates one owned navigation action", async () => {
     const { provider, pageResolver } = fixture({
       runAgentStream: vi.fn(async function* () {
@@ -197,15 +216,8 @@ describe("AgentOSAssistantProvider", () => {
     expect(JSON.stringify(events)).not.toContain("private chain");
   });
 
-  it("uses a verified current-page link when an explicit navigation request omits the tool call", async () => {
-    const { provider, pageResolver } = fixture({
-      runAgentStream: vi.fn(async function* () {
-        yield {
-          type: "answer_delta" as const,
-          content: `${ASSISTANT_FINAL_ANSWER_MARKER}正在为你打开产品页面。`,
-        };
-      }),
-    });
+  it("short-circuits an explicit current-page navigation without invoking AgentOS", async () => {
+    const { provider, runClient, circuit, pageResolver } = fixture();
 
     const events = [];
     for await (const event of provider.streamReply({
@@ -222,16 +234,36 @@ describe("AgentOSAssistantProvider", () => {
     }
 
     expect(events).toEqual([
-      { type: "answer_delta", content: "正在为你打开产品页面。" },
+      { type: "answer_delta", content: "可以，点击下方“产品介绍”前往。" },
       {
         type: "action",
         action: { kind: "navigate", pathname: "/product", label: "产品介绍" },
       },
     ]);
-    expect(pageResolver.exists).toHaveBeenCalledExactlyOnceWith(
-      "/product",
-      undefined,
-    );
+    expect(runClient.runAgentStream).not.toHaveBeenCalled();
+    expect(circuit.execute).not.toHaveBeenCalled();
+    expect(pageResolver.exists).not.toHaveBeenCalled();
+  });
+
+  it("matches a concise navigation request against the registered route title", async () => {
+    const { provider, runClient } = fixture();
+
+    await expect(
+      provider.reply({
+        request: { ...assistantRequest, message: "打开产品页面" },
+        pageContext: {
+          pathname: "/downloads",
+          search: "",
+          title: "下载中心",
+          text: "下载中心公开正文",
+          links: [{ label: "进入产品中心 →", href: "/product" }],
+        },
+      }),
+    ).resolves.toEqual({
+      content: "可以，点击下方“产品介绍”前往。",
+      suggestedActions: [{ label: "产品介绍", href: "/product" }],
+    });
+    expect(runClient.runAgentStream).not.toHaveBeenCalled();
   });
 
   it("uses a generic activity label for non-navigation tools", async () => {

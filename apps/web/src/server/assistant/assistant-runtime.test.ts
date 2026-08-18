@@ -236,6 +236,86 @@ describe("assistant server runtime", () => {
     expect(fetcher.mock.calls[0]?.[1]).not.toHaveProperty("headers");
   });
 
+  it("allows a development page load to outlive the production request budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn<typeof fetch>(
+        async () =>
+          await new Promise<Response>((resolve) => {
+            setTimeout(
+              () =>
+                resolve(
+                  new Response("<title>产品</title><main>公开正文</main>", {
+                    status: 200,
+                    headers: { "content-type": "text/html; charset=utf-8" },
+                  }),
+                ),
+              2_000,
+            );
+          }),
+      );
+      const runtime = createAssistantRuntime({
+        environment: { ...VALID_ENVIRONMENT, NODE_ENV: "development" },
+        fetcher,
+      });
+
+      const loading = runtime.pageResolver.load({
+        pathname: "/product",
+        search: "",
+      });
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      await expect(loading).resolves.toMatchObject({ text: "公开正文" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("allows development link validation to outlive the production destination budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn<typeof fetch>(async (input) => {
+        if (new URL(String(input)).pathname === "/product") {
+          return new Response(
+            '<title>产品</title><main><a href="/pricing">价格</a></main>',
+            {
+              status: 200,
+              headers: { "content-type": "text/html; charset=utf-8" },
+            },
+          );
+        }
+        return await new Promise<Response>((resolve) => {
+          setTimeout(
+            () =>
+              resolve(
+                new Response("<title>价格</title><main>价格正文</main>", {
+                  status: 200,
+                  headers: { "content-type": "text/html; charset=utf-8" },
+                }),
+              ),
+            2_001,
+          );
+        });
+      });
+      const runtime = createAssistantRuntime({
+        environment: { ...VALID_ENVIRONMENT, NODE_ENV: "development" },
+        fetcher,
+      });
+
+      const loading = runtime.pageResolver.load({
+        pathname: "/product",
+        search: "",
+      });
+      await vi.advanceTimersByTimeAsync(2_001);
+
+      await expect(loading).resolves.toMatchObject({
+        links: [{ href: "/pricing", label: "价格" }],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uses the direct-global anonymous identity and ignores spoofed forwarding headers", () => {
     const runtime = createAssistantRuntime({ environment: VALID_ENVIRONMENT });
 

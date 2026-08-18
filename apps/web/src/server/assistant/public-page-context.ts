@@ -402,6 +402,10 @@ export function createPublicPageContextResolver(
 ) {
   const origin = fixedOrigin(options.origin);
   const timeoutMs = options.timeoutMs ?? PUBLIC_PAGE_REQUEST_TIMEOUT_MS;
+  const destinationDeadlineMs = Math.max(
+    PUBLIC_PAGE_DESTINATION_DEADLINE_MS,
+    timeoutMs,
+  );
   const maxBytes = options.maxBytes ?? PUBLIC_PAGE_BODY_MAX_BYTES;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new TypeError("timeoutMs must be positive");
@@ -471,7 +475,7 @@ export function createPublicPageContextResolver(
       const extracted = extractPage(rawHtml, url, origin);
       if (!extracted) return null;
 
-      const deadline = Date.now() + PUBLIC_PAGE_DESTINATION_DEADLINE_MS;
+      const deadline = Date.now() + destinationDeadlineMs;
       const candidates = extracted.candidates;
       const links: Array<PublicPageLink | undefined> = new Array(
         candidates.length,
