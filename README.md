@@ -32,9 +32,9 @@ apps/web/public/          Logo、产品截图等正式素材（当前为空）
 - 码多多运行时验收：`docs/testing/assistant-runtime-acceptance.md`
 - 真实 Provider 冒烟：`docs/testing/model-provider-smoke.md`
 
-## 本地开发（直接运行 Web，端口 3000）
+## 本地开发（端口 3000）
 
-需要 Node.js 24、pnpm 11，以及已经配置好的本地数据库和应用环境变量。该方式不会自动启动 PostgreSQL、AgentOS、Nginx 或备份服务。
+需要 Node.js 24、pnpm 11、Docker，以及已经配置好的本地数据库和应用环境变量。`pnpm dev`会先按当前工作区源码增量构建并更新 AgentOS 与 Skill Registry，启动仅监听`127.0.0.1:7777/7788`的开发代理，再启动 Web，避免 Web 误连旧分支遗留的后端容器。
 
 ```bash
 pnpm install
@@ -42,6 +42,8 @@ pnpm dev
 ```
 
 访问 `http://127.0.0.1:3000`。直接开发模式的 Origin 必须使用端口 `3000`，并保持 `TRUST_NGINX_PROXY=false`。
+
+该命令不会启动或迁移 PostgreSQL，也不会启动 Nginx 或备份服务。只开发页面且明确要复用现有后端时可运行`pnpm dev:web`；该命令不会检查后端镜像是否与当前源码一致。
 
 ## 本地 Docker Compose（完整环境，端口 8080）
 
