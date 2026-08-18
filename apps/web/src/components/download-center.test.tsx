@@ -260,20 +260,49 @@ describe("managed download center", () => {
     ).toBeNull();
   });
 
-  it("fills the existing desktop right column with installation and platform content", () => {
+  it("keeps the desktop cover bounded and leaves installer controls in the main body", () => {
     render(<DownloadCenter resources={[desktopClient]} />);
 
     const client = card("码里奥桌面客户端");
     const rightColumn = client.querySelector<HTMLElement>(
       ":scope > .download-card__cover",
     );
+    const mainBody = client.querySelector<HTMLElement>(
+      ":scope > .download-card__body",
+    );
     expect(rightColumn).not.toBeNull();
+    expect(mainBody).not.toBeNull();
+    expect(rightColumn).toHaveTextContent("桌面客户端安装包");
+    expect(rightColumn?.querySelector("a, button, .download-empty")).toBeNull();
     expect(
-      within(rightColumn!).getByText("下载安装包 → 安装部署 → 进入使用"),
+      within(mainBody!).getByText("下载安装包 → 安装部署 → 进入使用"),
     ).toBeVisible();
     expect(
-      within(rightColumn!).getByRole("link", { name: "下载 Windows 安装包" }),
+      within(mainBody!).getByRole("link", { name: "下载 Windows 安装包" }),
     ).toBeVisible();
+  });
+
+  it("keeps narrow-mobile controls after the identity body, outside the clipped cover", () => {
+    const css = readFileSync("src/app/downloads/downloads.css", "utf8");
+    render(<DownloadCenter resources={[desktopClient]} />);
+
+    const client = card("码里奥桌面客户端");
+    const cover = client.querySelector<HTMLElement>(
+      ":scope > .download-card__cover",
+    );
+    const body = client.querySelector<HTMLElement>(
+      ":scope > .download-card__body",
+    );
+    expect(
+      within(body!).getByRole("heading", { name: "码里奥桌面客户端" }),
+    ).toBeVisible();
+    expect(
+      within(body!).getByRole("link", { name: "下载 Windows 安装包" }),
+    ).toBeVisible();
+    expect(cover?.querySelector("a, button, .download-empty")).toBeNull();
+    expect(css).toMatch(
+      /@media \(max-width:\s*640px\)[\s\S]*?\.download-card__cover\s*\{[^}]*aspect-ratio:\s*3\s*\/\s*2;[^}]*grid-row:\s*1;[\s\S]*?\.download-card__body\s*\{[^}]*grid-row:\s*2;/u,
+    );
   });
 
   it("shows both installer filenames, sizes, and direct public slot downloads", () => {

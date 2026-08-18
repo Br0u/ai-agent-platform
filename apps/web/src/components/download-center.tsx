@@ -149,50 +149,47 @@ function DesktopClientCard({ resource }: { resource: SoftwareResource }) {
             <dt>版本</dt>
             <dd>{resource.releaseVersion}</dd>
           </div>
+          {(["windows", "macos"] as const).map((platform) => {
+            const artifact = resource.platforms[platform];
+            const label = platform === "windows" ? "Windows" : "macOS";
+            return (
+              <div key={platform}>
+                <dt>{label}</dt>
+                <dd>
+                  {artifact
+                    ? `${artifact.filename} · ${formatFileSize(artifact.byteSize)}`
+                    : "暂无资源"}
+                </dd>
+              </div>
+            );
+          })}
         </dl>
-      </div>
-      <div className="download-card__cover">
-        <div className="download-card__body">
-          <dl className="download-card__metadata">
-            {(["windows", "macos"] as const).map((platform) => {
-              const artifact = resource.platforms[platform];
-              const label = platform === "windows" ? "Windows" : "macOS";
-              return (
-                <div key={platform}>
-                  <dt>{label}</dt>
-                  <dd>
-                    {artifact
-                      ? `${artifact.filename} · ${formatFileSize(artifact.byteSize)}`
-                      : "暂无资源"}
-                  </dd>
-                </div>
-              );
-            })}
-          </dl>
-          <p className="download-card__policy">
-            下载安装包 → 安装部署 → 进入使用
-          </p>
-          <div className="download-actions">
-            {(["windows", "macos"] as const).map((platform) => {
-              const artifact = resource.platforms[platform];
-              const label = platform === "windows" ? "Windows" : "macOS";
-              return artifact ? (
-                <a
-                  aria-label={`下载 ${label} 安装包`}
-                  className="download-button--primary"
-                  href={artifact.downloadUrl}
-                  key={platform}
-                >
-                  下载 {label} 安装包
-                </a>
-              ) : (
-                <span className="download-empty" key={platform}>
-                  暂无资源
-                </span>
-              );
-            })}
-          </div>
+        <p className="download-card__policy">
+          下载安装包 → 安装部署 → 进入使用
+        </p>
+        <div className="download-actions">
+          {(["windows", "macos"] as const).map((platform) => {
+            const artifact = resource.platforms[platform];
+            const label = platform === "windows" ? "Windows" : "macOS";
+            return artifact ? (
+              <a
+                aria-label={`下载 ${label} 安装包`}
+                className="download-button--primary"
+                href={artifact.downloadUrl}
+                key={platform}
+              >
+                下载 {label} 安装包
+              </a>
+            ) : (
+              <span className="download-empty" key={platform}>
+                暂无资源
+              </span>
+            );
+          })}
         </div>
+      </div>
+      <div aria-hidden="true" className="download-card__cover">
+        <p className="download-card__policy">桌面客户端安装包</p>
       </div>
     </article>
   );
