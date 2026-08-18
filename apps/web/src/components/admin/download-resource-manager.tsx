@@ -23,15 +23,10 @@ type ActionState =
   | { kind: "idle" }
   | { kind: "success"; resource: TypedDownloadResourceAdminDto }
   | { kind: "validation_error"; fieldErrors?: Record<string, string[]> }
-  | {
-      kind:
-        | "authentication_required"
-        | "account_setup_required"
-        | "access_error"
-        | "conflict"
-        | "domain_error"
-        | "internal_error";
-    };
+  | { kind: "authentication_required"; code?: string }
+  | { kind: "account_setup_required"; code?: string }
+  | { kind: "access_error"; code?: string }
+  | { kind: "conflict" | "domain_error" | "internal_error" };
 type ServerAction = (
   previous: ActionState,
   formData: FormData,
@@ -48,12 +43,27 @@ const categoryLabels = {
 function message(state: ActionState) {
   if (state.kind === "validation_error") return "请检查标出的字段。";
   if (state.kind === "conflict") return "资源已被更新，请刷新后重试。";
-  if (state.kind === "access_error") return "当前账号没有下载资源管理权限。";
+  if (state.kind === "account_setup_required")
+    return "请先完成账号初始化后再管理下载资源。";
+  if (state.kind === "access_error")
+    return state.code === "AUTH_ACCOUNT_DISABLED"
+      ? "当前账号已被禁用。"
+      : state.code === "AUTH_ACCOUNT_NOT_ACTIVE"
+        ? "当前账号尚未启用。"
+        : "当前账号没有下载资源管理权限。";
   if (state.kind === "authentication_required")
     return "登录状态已失效，请重新登录。";
   if (state.kind === "domain_error") return "当前资源状态不允许此操作。";
   if (state.kind === "internal_error") return "操作未完成，请稍后重试。";
   return "";
+}
+
+function FieldError({ state, name }: { state: ActionState; name: string }) {
+  const error =
+    state.kind === "validation_error"
+      ? state.fieldErrors?.[name]?.[0]
+      : undefined;
+  return error ? <span id={`download-field-${name}`}>{error}</span> : null;
 }
 function revision(resource: TypedDownloadResourceAdminDto) {
   return resource.draftRevision ?? resource.publishedRevision;
@@ -107,22 +117,23 @@ function ActionForm({
   onResource(resource: TypedDownloadResourceAdminDto): void;
 }) {
   const [state, formAction, pending] = useActionState(action, idle);
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (state.kind === "success") onResource(state.resource);
+    if (state.kind === "success") {
+      onResource(state.resource);
+      setOpen(false);
+      trigger.current?.focus();
+    }
   }, [state, onResource]);
   return (
-    <form action={formAction}>
-      <input name="id" type="hidden" value={resource.id} />
-      <input
-        name="expectedRowVersion"
-        type="hidden"
-        value={resource.rowVersion}
-      />
-      {slot ? <input name="slot" type="hidden" value={slot} /> : null}
+    <>
       <button
         className={`download-resource-manager__button download-resource-manager__button--${tone}`}
         disabled={disabled || pending}
-        type="submit"
+        onClick={() => setOpen(true)}
+        ref={trigger}
+        type="button"
       >
         {pending ? "正在处理…" : label}
       </button>
@@ -133,7 +144,51 @@ function ActionForm({
       >
         {message(state)}
       </p>
-    </form>
+      {open ? (
+        <AssistantSkillModal
+          labelledBy="download-confirm-heading"
+          onClose={() => {
+            setOpen(false);
+            trigger.current?.focus();
+          }}
+        >
+          <section className="download-resource-manager__dialog">
+            <h2 id="download-confirm-heading">确认{label}</h2>
+            <p>此操作将立即更新资源状态。</p>
+            <form
+              action={formAction}
+              className="download-resource-manager__dialog-actions"
+            >
+              <input name="id" type="hidden" value={resource.id} />
+              <input
+                name="expectedRowVersion"
+                type="hidden"
+                value={resource.rowVersion}
+              />
+              {slot ? <input name="slot" type="hidden" value={slot} /> : null}
+              <button
+                className="download-resource-manager__button download-resource-manager__button--secondary"
+                disabled={pending}
+                onClick={() => {
+                  setOpen(false);
+                  trigger.current?.focus();
+                }}
+                type="button"
+              >
+                取消
+              </button>
+              <button
+                className={`download-resource-manager__button download-resource-manager__button--${tone}`}
+                disabled={pending}
+                type="submit"
+              >
+                {pending ? "正在处理…" : "确认"}
+              </button>
+            </form>
+          </section>
+        </AssistantSkillModal>
+      ) : null}
+    </>
   );
 }
 
@@ -171,16 +226,40 @@ function CreateResourceDialog({
           <label>
             资源键
             <input
+              aria-describedby={
+                state.kind === "validation_error" && state.fieldErrors?.key
+                  ? "download-field-key"
+                  : undefined
+              }
+              aria-invalid={Boolean(
+                state.kind === "validation_error" && state.fieldErrors?.key,
+              )}
               maxLength={120}
               name="key"
               pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
               ref={initialFocusRef}
               required
             />
+            <FieldError name="key" state={state} />
           </label>
           <label>
             后台名称
-            <input maxLength={160} name="adminLabel" required />
+            <input
+              aria-describedby={
+                state.kind === "validation_error" &&
+                state.fieldErrors?.adminLabel
+                  ? "download-field-adminLabel"
+                  : undefined
+              }
+              aria-invalid={Boolean(
+                state.kind === "validation_error" &&
+                  state.fieldErrors?.adminLabel,
+              )}
+              maxLength={160}
+              name="adminLabel"
+              required
+            />
+            <FieldError name="adminLabel" state={state} />
           </label>
           <label>
             资源类型
@@ -224,6 +303,7 @@ function Editor({
   uploading,
   uploadError,
   onAbortUpload,
+  controlsLocked,
   onDirtyChange,
   onResource,
   onUpload,
@@ -232,6 +312,7 @@ function Editor({
   uploading: boolean;
   uploadError: string | null;
   onAbortUpload(): void;
+  controlsLocked: boolean;
   onDirtyChange(dirty: boolean): void;
   onResource(resource: TypedDownloadResourceAdminDto): void;
   onUpload(slot: Slot, file: File): void;
@@ -259,8 +340,12 @@ function Editor({
   );
   const [explicitPolicy, setExplicitPolicy] = useState(Boolean(current));
   useEffect(() => {
-    if (state.kind === "success") onResource(state.resource);
-  }, [state, onResource]);
+    if (state.kind === "success") {
+      setDirty(false);
+      onDirtyChange(false);
+      onResource(state.resource);
+    }
+  }, [state, onDirtyChange, onResource]);
   const disabled = uploading || pending;
   const actionsDisabled = disabled || dirty;
   const document =
@@ -347,7 +432,7 @@ function Editor({
         <DownloadSoftwareArtifacts
           artifacts={softwareArtifacts}
           disabled={
-            disabled || removingSlot !== null || !resource.draftRevision
+            controlsLocked || removingSlot !== null || !resource.draftRevision
           }
           onRemove={(slot) => {
             setRemovingSlot(slot);
@@ -406,10 +491,19 @@ function Editor({
             资源名称
             <input
               defaultValue={current?.name ?? ""}
+              aria-describedby={
+                state.kind === "validation_error" && state.fieldErrors?.name
+                  ? "download-field-name"
+                  : undefined
+              }
+              aria-invalid={Boolean(
+                state.kind === "validation_error" && state.fieldErrors?.name,
+              )}
               maxLength={160}
               name="name"
               required
             />
+            <FieldError name="name" state={state} />
           </label>
           <label>
             所属产品
@@ -516,10 +610,21 @@ function Editor({
               <input
                 aria-label="版本号"
                 defaultValue={softwareCurrent?.releaseVersion ?? ""}
+                aria-describedby={
+                  state.kind === "validation_error" &&
+                  state.fieldErrors?.releaseVersion
+                    ? "download-field-releaseVersion"
+                    : undefined
+                }
+                aria-invalid={Boolean(
+                  state.kind === "validation_error" &&
+                    state.fieldErrors?.releaseVersion,
+                )}
                 maxLength={40}
                 name="releaseVersion"
                 required
               />
+              <FieldError name="releaseVersion" state={state} />
             </label>
           )}
           <label className="download-resource-manager__wide-field">
@@ -545,6 +650,15 @@ function Editor({
                 ? "编辑"
                 : "保存草稿"}
           </button>
+          {dirty ? (
+            <button
+              className="download-resource-manager__button download-resource-manager__button--secondary"
+              disabled={disabled}
+              type="reset"
+            >
+              放弃修改
+            </button>
+          ) : null}
           {resource.kind === "document" ? (
             <label className="download-resource-manager__upload">
               上传 PDF
@@ -666,6 +780,11 @@ export function DownloadResourceManager({
     resourceId: string;
   } | null>(null);
   const controller = useRef<AbortController | null>(null);
+  const newTrigger = useRef<HTMLButtonElement>(null);
+  const controlsLocked = uploadingId !== null || editingDirty;
+  useEffect(() => {
+    if (!newOpen) newTrigger.current?.focus();
+  }, [newOpen]);
   const selected =
     resources.find((resource) => resource.id === selectedId) ?? null;
   const products = Array.from(
@@ -694,10 +813,12 @@ export function DownloadResourceManager({
       (!product || current?.product === product)
     );
   });
-  const adopt = (next: TypedDownloadResourceAdminDto) =>
+  const adopt = (next: TypedDownloadResourceAdminDto) => {
     setResources((current) =>
       current.map((item) => (item.id === next.id ? next : item)),
     );
+    setEditingDirty(false);
+  };
   const upload = async (
     resource: TypedDownloadResourceAdminDto,
     slot: Slot,
@@ -773,8 +894,9 @@ export function DownloadResourceManager({
         </div>
         <button
           className="download-resource-manager__button"
-          disabled={uploadingId !== null || editingDirty}
+          disabled={controlsLocked}
           onClick={() => setNewOpen(true)}
+          ref={newTrigger}
           type="button"
         >
           新增资源
@@ -785,7 +907,7 @@ export function DownloadResourceManager({
           搜索资源
           <input
             aria-label="搜索资源"
-            disabled={uploadingId !== null || editingDirty}
+            disabled={controlsLocked}
             onChange={(event) => setSearch(event.target.value)}
             type="search"
             value={search}
@@ -795,7 +917,7 @@ export function DownloadResourceManager({
           资源状态
           <select
             aria-label="资源状态"
-            disabled={uploadingId !== null}
+            disabled={controlsLocked}
             onChange={(event) => setStatus(event.target.value)}
             value={status}
           >
@@ -819,7 +941,7 @@ export function DownloadResourceManager({
           资源分类
           <select
             aria-label="筛选资源分类"
-            disabled={uploadingId !== null}
+            disabled={controlsLocked}
             onChange={(event) => setSelectedCategory(event.target.value)}
             value={selectedCategory}
           >
@@ -835,7 +957,7 @@ export function DownloadResourceManager({
           筛选产品
           <select
             aria-label="筛选产品"
-            disabled={uploadingId !== null}
+            disabled={controlsLocked}
             onChange={(event) => setProduct(event.target.value)}
             value={product}
           >
@@ -871,7 +993,7 @@ export function DownloadResourceManager({
                         aria-current={
                           resource.id === selectedId ? "page" : undefined
                         }
-                        disabled={uploadingId !== null || editingDirty}
+                        disabled={controlsLocked}
                         onClick={() => setSelectedId(resource.id)}
                         type="button"
                       >
@@ -892,6 +1014,7 @@ export function DownloadResourceManager({
             <Editor
               key={`${selected.id}:${selected.rowVersion}`}
               onAbortUpload={() => controller.current?.abort()}
+              controlsLocked={controlsLocked}
               onDirtyChange={setEditingDirty}
               onResource={adopt}
               onUpload={(slot, file) => void upload(selected, slot, file)}

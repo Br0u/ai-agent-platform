@@ -50,3 +50,11 @@
 
 - Commit: `41b8a62324f34156836faa83287cdf8c8a57364d`.
 - Risk: Task 9 remains responsible for deleting the explicitly preserved public document/PDF facade. The public behavior itself was not changed here.
+
+## Fix round 3
+
+- Restored one dirty-state lock for navigation, filters, New, lifecycle, and artifact upload/removal; save and “放弃修改” clear it.
+- Restored typed confirmation dialogs with Escape/cancel/trigger-focus recovery for lifecycle operations and New-dialog focus recovery.
+- Restored safe account-state messages, accessible create/draft field errors, and typed duplicate-key mapping.
+- GREEN: focused manager/actions/contracts/service/page/upload/preview suite passed 7 files / 80 tests; typecheck, lint, format check, and diff check passed.
+- Commit: recorded in final handoff.

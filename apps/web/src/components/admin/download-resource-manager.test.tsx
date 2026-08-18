@@ -172,4 +172,64 @@ describe("DownloadResourceManager", () => {
     expect(screen.getByLabelText("下载权限")).toHaveValue("contact");
     expect(screen.getByRole("option", { name: "可下载" })).toBeDisabled();
   });
+
+  it("locks uploads, filters, navigation and New while dirty, then unlocks after save or reset", async () => {
+    render(
+      <DownloadResourceManager resources={[software, documentResource]} />,
+    );
+    fireEvent.change(screen.getByLabelText("版本号"), {
+      target: { value: "v2.1.0" },
+    });
+    expect(screen.getByLabelText("上传 macOS 安装包")).toBeDisabled();
+    expect(screen.getByLabelText("资源状态")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "新增资源" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /产品资料/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "放弃修改" }));
+    expect(screen.getByLabelText("上传 macOS 安装包")).not.toBeDisabled();
+    fireEvent.change(screen.getByLabelText("版本号"), {
+      target: { value: "v2.1.0" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "新增资源" }),
+      ).not.toBeDisabled(),
+    );
+  });
+
+  it("confirms lifecycle mutations, supports cancel and Escape, and restores trigger focus", async () => {
+    render(<DownloadResourceManager resources={[software]} />);
+    const trigger = screen.getByRole("button", { name: "发布资源" });
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(trigger).toHaveFocus();
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(trigger).toHaveFocus();
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("button", { name: "确认" }));
+    await waitFor(() => expect(actions.publish).toHaveBeenCalled());
+  });
+
+  it("renders safe create field errors with accessibility wiring", async () => {
+    actions.create.mockResolvedValueOnce({
+      kind: "validation_error",
+      fieldErrors: { key: ["资源键已存在"] },
+    });
+    render(<DownloadResourceManager resources={[software]} />);
+    fireEvent.click(screen.getByRole("button", { name: "新增资源" }));
+    fireEvent.change(screen.getByRole("textbox", { name: /资源键/ }), {
+      target: { value: "mdd2-client" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: /后台名称/ }), {
+      target: { value: "码里奥桌面客户端" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "创建资源" }));
+    await waitFor(() => expect(screen.getByText("资源键已存在")).toBeVisible());
+    expect(screen.getByRole("textbox", { name: /资源键/ })).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+  });
 });

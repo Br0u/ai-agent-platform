@@ -94,6 +94,23 @@ describe("download resource actions", () => {
     );
   });
 
+  it("maps the download key unique constraint to a safe typed create field error", async () => {
+    const current = typedFixture();
+    current.service.createTypedResource.mockRejectedValueOnce({
+      code: "23505",
+      constraint: "download_resources_key_unique",
+    });
+    await expect(
+      current.actions.createTypedDownloadResourceAction(
+        { kind: "idle" },
+        typedCreateForm("software"),
+      ),
+    ).resolves.toEqual({
+      kind: "validation_error",
+      fieldErrors: { key: ["资源键已存在"] },
+    });
+  });
+
   it("saves software metadata with the current row version and rejects an immutable-kind form before mutation", async () => {
     const current = typedFixture();
     await expect(

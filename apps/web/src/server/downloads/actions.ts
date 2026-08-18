@@ -4,6 +4,7 @@ import { revalidatePath, updateTag } from "next/cache";
 import { z } from "zod";
 
 import { AuthAccessError, requirePermission } from "../auth/access";
+import { matchesPostgresConstraint } from "../registration/database-errors";
 import {
   artifactSlotSchema,
   mutateDownloadResourceInputSchema,
@@ -447,7 +448,14 @@ export function createTypedDownloadResourceActions(
         invalidate(dependencies);
         return { kind: "success", resource };
       } catch (error) {
-        return fail(error);
+        return matchesPostgresConstraint(error, "23505", [
+          "download_resources_key_unique",
+        ])
+          ? {
+              kind: "validation_error",
+              fieldErrors: { key: ["资源键已存在"] },
+            }
+          : fail(error);
       }
     },
     async saveTypedDownloadDraftAction(
