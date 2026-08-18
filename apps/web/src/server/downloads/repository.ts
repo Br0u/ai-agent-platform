@@ -26,6 +26,7 @@ import {
   downloadResourceRevisions,
   downloadResources,
   getDatabase,
+  getDatabasePool,
 } from "@ai-agent-platform/database";
 
 import {
@@ -51,8 +52,31 @@ type RevisionInsert = typeof downloadResourceRevisions.$inferInsert;
 type ArtifactInsert = typeof downloadResourceArtifacts.$inferInsert;
 type ResourceState = typeof downloadResources.$inferSelect.state;
 
+export type DownloadResourceArtifact =
+  typeof downloadResourceArtifacts.$inferSelect;
+export type DownloadResourceRevision =
+  typeof downloadResourceRevisions.$inferSelect & {
+    artifacts: DownloadResourceArtifact[];
+  };
+export type DownloadResourceAggregate =
+  typeof downloadResources.$inferSelect & {
+    publishedRevision: DownloadResourceRevision | null;
+    draftRevision: DownloadResourceRevision | null;
+  };
+export type DownloadPublicResource = Pick<
+  typeof downloadResources.$inferSelect,
+  "key" | "updatedAt"
+> &
+  DownloadResourceRevision;
+
 const publishedRevisionColumns = getTableColumns(publishedRevision);
 const draftRevisionColumns = getTableColumns(draftRevision);
+
+function countColumn(value: unknown, column: string): number | null {
+  if (typeof value !== "object" || value === null) return null;
+  const entry = Object.entries(value).find(([name]) => name === column);
+  return entry && typeof entry[1] === "number" ? entry[1] : null;
+}
 
 const adminProjection = {
   id: downloadResources.id,
@@ -71,10 +95,28 @@ const adminProjection = {
 
 async function withArtifacts<
   Row extends {
-    publishedRevision: { id: string } | null;
-    draftRevision: { id: string } | null;
+    publishedRevision:
+      | (typeof downloadResourceRevisions.$inferSelect & {
+          id: string;
+        })
+      | null;
+    draftRevision:
+      | (typeof downloadResourceRevisions.$inferSelect & {
+          id: string;
+        })
+      | null;
   },
->(databaseTx: DatabaseTransaction, rows: Row[]) {
+>(
+  databaseTx: DatabaseTransaction,
+  rows: Row[],
+): Promise<
+  Array<
+    Omit<Row, "publishedRevision" | "draftRevision"> & {
+      publishedRevision: DownloadResourceRevision | null;
+      draftRevision: DownloadResourceRevision | null;
+    }
+  >
+> {
   const revisionIds = rows.flatMap((row) =>
     [row.publishedRevision?.id, row.draftRevision?.id].filter(
       (id): id is string => id !== undefined,
@@ -453,12 +495,18 @@ function transactionAdapter(databaseTx: DatabaseTransaction) {
         FROM download_resource_artifacts
         WHERE 1 = 1 ${exclusion}
       `);
-      const row = result.rows[0] as
-        | { object_reference_count: number; cover_reference_count: number }
-        | undefined;
+      const candidate = result.rows[0];
+      const objectReferenceCount = countColumn(
+        candidate,
+        "object_reference_count",
+      );
+      const coverReferenceCount = countColumn(
+        candidate,
+        "cover_reference_count",
+      );
       return {
-        objectReferenceCount: row?.object_reference_count ?? 0,
-        coverReferenceCount: row?.cover_reference_count ?? 0,
+        objectReferenceCount: objectReferenceCount ?? 0,
+        coverReferenceCount: coverReferenceCount ?? 0,
       };
     },
 
@@ -479,6 +527,8 @@ function transactionAdapter(databaseTx: DatabaseTransaction) {
     appendAudit: audit.write,
   };
 }
+
+export type DownloadResourceTransaction = ReturnType<typeof transactionAdapter>;
 
 async function throwWithFinalizationErrors(
   primaryError: unknown,
@@ -583,7 +633,7 @@ export const downloadResourceRepository = {
     );
   },
 
-  async listPublic() {
+  async listPublic(): Promise<DownloadPublicResource[]> {
     const rows = await getDatabase()
       .select({
         key: downloadResources.key,
@@ -613,7 +663,7 @@ export const downloadResourceRepository = {
     );
   },
 
-  async getPublicByKey(key: string) {
+  async getPublicByKey(key: string): Promise<DownloadPublicResource | null> {
     const rows = await getDatabase()
       .select({
         key: downloadResources.key,
@@ -648,8 +698,7 @@ export const downloadResourceRepository = {
     work: (tx: ReturnType<typeof transactionAdapter>) => Promise<Result>,
     postCommitCleanup?: (result: Result) => Promise<void>,
   ): Promise<Result> {
-    const database = getDatabase() as Database & { $client: Pool };
-    const client = await acquireArtifactMutationLock(database.$client);
+    const client = await acquireArtifactMutationLock(getDatabasePool());
     let result!: Result;
     let failed = false;
     let primaryError: unknown;

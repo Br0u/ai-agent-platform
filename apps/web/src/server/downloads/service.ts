@@ -32,85 +32,44 @@ import {
   createDownloadFileStore,
   type DownloadArtifactKind,
   type DownloadStage,
-  type DownloadStageExtension,
 } from "./file-store";
-import { downloadResourceRepository } from "./repository";
-
-type Artifact = {
-  id: string;
-  revisionId: string;
-  revisionKind: "document" | "software";
-  slot: "document" | "windows" | "macos";
-  objectKey: string;
-  originalFilename: string;
-  extension: string;
-  mediaType: string;
-  byteSize: number;
-  sha256: string;
-  pageCount: number | null;
-  coverObjectKey: string | null;
-  createdAt: Date;
-};
-type Revision = {
-  id: string;
-  resourceId: string;
-  resourceKind: "document" | "software";
-  name: string;
-  product: string;
-  category: "materials" | "software" | "deployment" | "whitepapers";
-  resourceType: string;
-  description: string;
-  sortOrder: number;
-  previewPolicy: "public" | "contact" | null;
-  downloadPolicy: "public" | "contact";
-  releaseVersion: string | null;
-  createdAt: Date;
-  publishedAt: Date | null;
-  cleanupPendingAt?: Date | null;
-  artifacts: Artifact[];
-};
-type Resource = {
-  id: string;
-  key: string;
-  adminLabel: string;
-  kind: "document" | "software";
-  state: "unpublished" | "published" | "downline";
-  publishedRevisionId: string | null;
-  draftRevisionId: string | null;
-  rowVersion: number;
-  createdAt: Date;
-  updatedAt: Date;
-  publishedRevision: Revision | null;
-  draftRevision: Revision | null;
-};
+import {
+  downloadResourceRepository,
+  type DownloadResourceAggregate as Resource,
+  type DownloadResourceArtifact as Artifact,
+  type DownloadResourceRevision as Revision,
+  type DownloadResourceTransaction as Transaction,
+} from "./repository";
 type MutationInput = z.infer<typeof mutateDownloadResourceInputSchema>;
-type Transaction = Parameters<
-  Parameters<typeof downloadResourceRepository.transaction>[0]
->[0];
 type Context = { ipAddress?: string; userAgent?: string };
 
 const uploadArtifactInputSchema = mutateDownloadResourceInputSchema
   .safeExtend({
     slot: artifactSlotSchema,
-    stage: z.unknown(),
+    stage: z.custom<DownloadStage>(),
     originalFilename: z.string().trim().min(1).max(255),
     extension: z.enum([".pdf", ".exe", ".msi", ".zip", ".dmg", ".pkg"]),
     mediaType: z.string().trim().min(1).max(128),
     byteSize: z.number().int().positive(),
     sha256: z.string().regex(/^[0-9a-f]{64}$/u),
     pageCount: z.number().int().positive().optional(),
-    coverStage: z.unknown().optional(),
+    coverStage: z.custom<DownloadStage>().optional(),
   })
   .strict();
 const attachUploadedPdfInputSchema = mutateDownloadResourceInputSchema
   .safeExtend({
-    pdfStage: z.unknown(),
-    coverStage: z.unknown(),
+    pdfStage: z.custom<DownloadStage>(),
+    coverStage: z.custom<DownloadStage>(),
     pageCount: z.number().int().positive(),
     byteSize: z.number().int().positive(),
     sha256: z.string().regex(/^[0-9a-f]{64}$/u),
   })
   .strict();
+const byteRangeSchema = z
+  .object({ start: z.number().int().min(0), end: z.number().int().min(0) })
+  .strict()
+  .refine(({ start, end }) => start <= end)
+  .optional();
 
 export const downloadResourceFileStore = createDownloadFileStore(
   process.env.DOWNLOAD_RESOURCE_ROOT,
@@ -348,7 +307,7 @@ async function update(
     ...updated,
     publishedRevision,
     draftRevision,
-  } as Resource;
+  };
 }
 function auditEnvelope(
   actor: WorkforceActor,
@@ -426,7 +385,7 @@ async function cleanup(
   detached: Revision | null,
 ) {
   if (detached) await tx.markRevisionCleanupPending(detached.id);
-  return tx.listCleanupPendingRevisions(resourceId) as Promise<Revision[]>;
+  return tx.listCleanupPendingRevisions(resourceId);
 }
 async function cleanupObjects(
   revisions: Revision[],
@@ -483,7 +442,7 @@ export const downloadResourceService = {
     );
     return {
       total: result.total,
-      items: await Promise.all((result.items as Resource[]).map(adminDto)),
+      items: await Promise.all(result.items.map(adminDto)),
     };
   },
   async listTypedAdminResources(rawQuery: unknown) {
@@ -493,7 +452,7 @@ export const downloadResourceService = {
     );
     return {
       total: result.total,
-      items: await Promise.all((result.items as Resource[]).map(typedAdminDto)),
+      items: await Promise.all(result.items.map(typedAdminDto)),
     };
   },
   async getAdminResource(id: unknown) {
@@ -501,7 +460,7 @@ export const downloadResourceService = {
     const resource = await downloadResourceRepository.getAdminById(
       parse(mutateDownloadResourceInputSchema.shape.id, id),
     );
-    return resource ? adminDto(resource as Resource) : null;
+    return resource ? adminDto(resource) : null;
   },
   async createResource(rawInput: unknown, context: Context = {}) {
     const actor = await authenticated();
@@ -509,11 +468,11 @@ export const downloadResourceService = {
     return downloadResourceRepository.transaction(async (tx) => {
       await tx.assertActiveWorkforcePermission(actor.userId, "admin:downloads");
       const created = await tx.insertResource({ ...input, kind: "document" });
-      const resource = {
+      const resource: Resource = {
         ...created,
         publishedRevision: null,
         draftRevision: null,
-      } as Resource;
+      };
       await tx.appendAudit(createdAudit(actor, resource, context));
       return adminDto(resource);
     });
@@ -524,11 +483,11 @@ export const downloadResourceService = {
     return downloadResourceRepository.transaction(async (tx) => {
       await tx.assertActiveWorkforcePermission(actor.userId, "admin:downloads");
       const created = await tx.insertResource(input);
-      const resource = {
+      const resource: Resource = {
         ...created,
         publishedRevision: null,
         draftRevision: null,
-      } as Resource;
+      };
       await tx.appendAudit(createdAudit(actor, resource, context));
       return typedAdminDto(resource);
     });
@@ -548,7 +507,7 @@ export const downloadResourceService = {
           actor.userId,
           "admin:downloads",
         );
-        const current = (await tx.lockResource(input.id)) as Resource | null;
+        const current = await tx.lockResource(input.id);
         assertCurrent(current, input);
         if (current.kind !== input.kind)
           throw new Error("DOWNLOAD_RESOURCE_KIND_IMMUTABLE");
@@ -564,7 +523,7 @@ export const downloadResourceService = {
               revisionKind: current.kind,
             })
           : [];
-        const draft = { ...inserted, artifacts: cloned } as Revision;
+        const draft: Revision = { ...inserted, artifacts: cloned };
         const resource = await update(
           tx,
           current,
@@ -602,12 +561,12 @@ export const downloadResourceService = {
     try {
       throwIfAborted(signal);
       const objectKey = await downloadResourceFileStore.commitArtifact(
-        input.stage as DownloadStage,
+        input.stage,
         {
           resourceId: input.id,
           revisionId,
           slot: input.slot,
-          extension: input.extension as DownloadStageExtension,
+          extension: input.extension,
         },
       );
       committed.push(objectKey);
@@ -621,7 +580,7 @@ export const downloadResourceService = {
         )
           throw new Error("DOWNLOAD_RESOURCE_INPUT_INVALID:document");
         coverObjectKey = await downloadResourceFileStore.commitArtifact(
-          input.coverStage as DownloadStage,
+          input.coverStage,
           {
             resourceId: input.id,
             revisionId,
@@ -639,7 +598,7 @@ export const downloadResourceService = {
             actor.userId,
             "admin:downloads",
           );
-          const current = (await tx.lockResource(input.id)) as Resource | null;
+          const current = await tx.lockResource(input.id);
           assertCurrent(current, input);
           if (
             current.kind === "document"
@@ -685,13 +644,13 @@ export const downloadResourceService = {
             coverObjectKey,
           });
           throwIfAborted(signal);
-          const draft = {
+          const draft: Revision = {
             ...inserted,
             artifacts: [
               ...cloned.filter((candidate) => candidate.slot !== input.slot),
               replacement.artifact,
             ],
-          } as Revision;
+          };
           const resource = await update(
             tx,
             current,
@@ -700,7 +659,9 @@ export const downloadResourceService = {
             current.publishedRevision,
             draft,
           );
+          throwIfAborted(signal);
           const pending = await cleanup(tx, current.id, previousDraft);
+          throwIfAborted(signal);
           await tx.appendAudit(
             revisionAudit(
               "download_resource.uploaded",
@@ -710,7 +671,9 @@ export const downloadResourceService = {
               context,
             ),
           );
-          return { dto: await typedAdminDto(resource), resource, pending };
+          const dto = await typedAdminDto(resource);
+          throwIfAborted(signal);
+          return { dto, resource, pending };
         },
         async ({ resource, pending }) => {
           businessCommitted = true;
@@ -719,11 +682,21 @@ export const downloadResourceService = {
       );
     } catch (error) {
       if (businessCommitted) throw error;
+      const compensationFailures: unknown[] = [];
       await Promise.all(
-        committed.map((key) =>
-          downloadResourceFileStore.remove(key).catch(() => undefined),
-        ),
+        committed.map(async (key) => {
+          try {
+            await downloadResourceFileStore.remove(key);
+          } catch (cleanupError) {
+            compensationFailures.push(cleanupError);
+          }
+        }),
       );
+      if (compensationFailures.length)
+        throw new AggregateError(
+          [error, ...compensationFailures],
+          "Upload artifact compensation failed",
+        );
       throw error;
     }
   },
@@ -756,7 +729,7 @@ export const downloadResourceService = {
           actor.userId,
           "admin:downloads",
         );
-        const current = (await tx.lockResource(input.id)) as Resource | null;
+        const current = await tx.lockResource(input.id);
         assertCurrent(current, input);
         const draft = current.draftRevision;
         if (!draft || !(await publishable(draft)))
@@ -771,10 +744,10 @@ export const downloadResourceService = {
         );
         const published = await tx.markRevisionPublished(draft.id);
         if (!published) throw new Error("DOWNLOAD_RESOURCE_NOT_PUBLISHABLE");
-        const resource = {
+        const resource: Resource = {
           ...updated,
           publishedRevision: { ...published, artifacts: draft.artifacts },
-        } as Resource;
+        };
         const pending = await cleanup(
           tx,
           current.id,
@@ -810,7 +783,7 @@ export const downloadResourceService = {
             actor.userId,
             "admin:downloads",
           );
-          const current = (await tx.lockResource(input.id)) as Resource | null;
+          const current = await tx.lockResource(input.id);
           assertCurrent(current, input);
           if (
             current.state !== "published" ||
@@ -838,7 +811,7 @@ export const downloadResourceService = {
           return {
             resource,
             dto: await adminDto(resource),
-            pending: [] as Revision[],
+            pending: [],
           };
         },
         async ({ resource, pending }) =>
@@ -856,7 +829,7 @@ export const downloadResourceService = {
             actor.userId,
             "admin:downloads",
           );
-          const current = (await tx.lockResource(input.id)) as Resource | null;
+          const current = await tx.lockResource(input.id);
           assertCurrent(current, input);
           if (!current.draftRevision)
             throw new Error("DOWNLOAD_RESOURCE_NO_DRAFT");
@@ -900,7 +873,7 @@ export const downloadResourceService = {
           actor.userId,
           "admin:downloads",
         );
-        const current = (await tx.lockResource(input.id)) as Resource | null;
+        const current = await tx.lockResource(input.id);
         assertCurrent(current, input);
         const previousDraft = current.draftRevision;
         if (
@@ -934,12 +907,12 @@ export const downloadResourceService = {
           slot: input.slot,
         });
         if (!removed) throw new Error("DOWNLOAD_RESOURCE_FILE_NOT_REMOVABLE");
-        const draft = {
+        const draft: Revision = {
           ...inserted,
           artifacts: cloned.filter(
             (candidate) => candidate.slot !== input.slot,
           ),
-        } as Revision;
+        };
         const resource = await update(
           tx,
           current,
@@ -975,7 +948,7 @@ export const downloadResourceService = {
     const resources = await downloadResourceRepository.listPublic();
     const published = await Promise.all(
       resources.map(async (row) => {
-        const revision = row as { key: string } & Revision;
+        const revision = row;
         if (!revision.publishedAt || !(await publishable(revision)))
           return null;
         if (revision.resourceKind === "document") {
@@ -1065,9 +1038,7 @@ export const downloadResourceService = {
   ) {
     if (typeof key !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(key))
       return null;
-    const resource = (await downloadResourceRepository.getPublicByKey(key)) as
-      | ({ key: string } & Revision)
-      | null;
+    const resource = await downloadResourceRepository.getPublicByKey(key);
     if (
       !resource ||
       resource.resourceKind !== "document" ||
@@ -1086,7 +1057,7 @@ export const downloadResourceService = {
       return null;
     const opened = await downloadResourceFileStore.open(
       kind === "cover" ? document.coverObjectKey : document.objectKey,
-      range as { start: number; end: number } | undefined,
+      parse(byteRangeSchema, range),
     );
     if (kind !== "cover" && opened.size !== document.byteSize) {
       opened.readable.destroy();
@@ -1106,16 +1077,16 @@ export const downloadResourceService = {
     await authenticated();
     if (kind !== "pdf" && kind !== "cover")
       throw new Error("DOWNLOAD_RESOURCE_INPUT_INVALID:kind");
-    const resource = (await downloadResourceRepository.getAdminById(
+    const resource = await downloadResourceRepository.getAdminById(
       parse(mutateDownloadResourceInputSchema.shape.id, id),
-    )) as Resource | null;
+    );
     const document = resource?.draftRevision
       ? file(resource.draftRevision, "document")
       : null;
     if (!document || !document.coverObjectKey) return null;
     return downloadResourceFileStore.open(
       kind === "cover" ? document.coverObjectKey : document.objectKey,
-      range as { start: number; end: number } | undefined,
+      parse(byteRangeSchema, range),
     );
   },
 };

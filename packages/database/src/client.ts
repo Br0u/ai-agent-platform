@@ -38,6 +38,12 @@ export function getDatabase(): NodePgDatabase<typeof schema> {
   return database;
 }
 
+export function getDatabasePool(): Pool {
+  getDatabase();
+  if (!pool) throw new Error("Database pool initialization failed");
+  return pool;
+}
+
 export async function probeDatabase(): Promise<void> {
   await getDatabase().execute(sql`select 1`);
 }

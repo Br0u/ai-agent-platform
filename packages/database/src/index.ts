@@ -7,7 +7,7 @@ export {
 } from "./credentials/password";
 export * from "./identity-policy";
 export { assertSafeIdentityMigrationTestDatabaseUrl } from "./migrations/migration-test-safety";
-export { getDatabase, probeDatabase } from "./client";
+export { getDatabase, getDatabasePool, probeDatabase } from "./client";
 export {
   createDrizzleAccessControlRepository,
   seedAccessControl,

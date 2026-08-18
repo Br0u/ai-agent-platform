@@ -5,7 +5,9 @@ import { headers } from "next/headers";
 import { resolveTrustedRequestIp } from "../auth/shared-options";
 import {
   createDefaultDownloadResourceActions,
+  createDefaultTypedDownloadResourceActions,
   type DownloadResourceActionState,
+  type TypedDownloadResourceActionState,
 } from "./actions";
 
 async function actions() {
@@ -17,6 +19,20 @@ async function actions() {
     .trim()
     .slice(0, 512);
   return createDefaultDownloadResourceActions({
+    ...(ipAddress ? { ipAddress } : {}),
+    ...(userAgent ? { userAgent } : {}),
+  });
+}
+
+async function typedActions() {
+  const requestHeaders = await headers();
+  const ipAddress = resolveTrustedRequestIp(requestHeaders);
+  const userAgent = requestHeaders
+    .get("user-agent")
+    ?.replace(/[\u0000-\u001f\u007f]/gu, "")
+    .trim()
+    .slice(0, 512);
+  return createDefaultTypedDownloadResourceActions({
     ...(ipAddress ? { ipAddress } : {}),
     ...(userAgent ? { userAgent } : {}),
   });
@@ -62,4 +78,24 @@ export async function removeDownloadDraftFileAction(
   formData: FormData,
 ) {
   return (await actions()).removeDownloadDraftFileAction(previous, formData);
+}
+
+export async function createTypedDownloadResourceAction(
+  previous: TypedDownloadResourceActionState,
+  formData: FormData,
+) {
+  return (await typedActions()).createTypedDownloadResourceAction(
+    previous,
+    formData,
+  );
+}
+
+export async function saveTypedDownloadDraftAction(
+  previous: TypedDownloadResourceActionState,
+  formData: FormData,
+) {
+  return (await typedActions()).saveTypedDownloadDraftAction(
+    previous,
+    formData,
+  );
 }

@@ -185,6 +185,17 @@ describe("admin download upload", () => {
       wiring.read.mockRejectedValueOnce(new PdfUploadError(code));
       expect((await POST(request('"2"'), params)).status).toBe(status);
     }
+    wiring.read.mockRejectedValueOnce(
+      new PdfUploadError(
+        "invalid_multipart",
+        Object.assign(new Error("disk full"), { code: "ENOSPC" }),
+      ),
+    );
+    const wrappedStorage = await POST(request('"2"'), params);
+    expect(wrappedStorage.status).toBe(507);
+    await expect(wrappedStorage.json()).resolves.toMatchObject({
+      error: { code: "insufficient_storage" },
+    });
     wiring.attach.mockRejectedValueOnce(
       new Error("DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT"),
     );

@@ -93,13 +93,13 @@ function statusFor(error: unknown, request: Request) {
       error.status,
       error.status === 401 ? "authentication_required" : "permission_denied",
     ] as const;
+  if (artifactUploadErrorCode(error) === "insufficient_storage")
+    return [507, "insufficient_storage"] as const;
   if (error instanceof PdfUploadError)
     return [
       error.code === "invalid_multipart" ? 400 : 413,
       error.code,
     ] as const;
-  if (artifactUploadErrorCode(error) === "insufficient_storage")
-    return [507, "insufficient_storage"] as const;
   if (error instanceof AggregateError) return [500, "internal_error"] as const;
   if (getPdfToolErrorCode(error) === "invalid_pdf")
     return [422, "invalid_pdf"] as const;
