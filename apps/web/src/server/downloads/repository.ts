@@ -51,6 +51,30 @@ type ResourceState = typeof downloadResources.$inferSelect.state;
 const publishedRevisionColumns = getTableColumns(publishedRevision);
 const draftRevisionColumns = getTableColumns(draftRevision);
 
+type PublicRevisionRow = {
+  resourceKind: "document" | "software";
+  previewPolicy: "public" | "contact" | null;
+};
+
+function isDocumentPublicRow<Row extends PublicRevisionRow>(
+  row: Row,
+): row is Row & {
+  resourceKind: "document";
+  previewPolicy: "public" | "contact";
+} {
+  return row.resourceKind === "document" && row.previewPolicy !== null;
+}
+
+export function documentPublicRows<Row extends PublicRevisionRow>(rows: Row[]) {
+  return rows.filter(isDocumentPublicRow);
+}
+
+export function documentPublicRow<Row extends PublicRevisionRow>(
+  row: Row | undefined,
+) {
+  return row && isDocumentPublicRow(row) ? row : null;
+}
+
 const adminProjection = {
   id: downloadResources.id,
   key: downloadResources.key,
@@ -414,7 +438,7 @@ export const downloadResourceRepository = {
   },
 
   async listPublic() {
-    return getDatabase()
+    const rows = await getDatabase()
       .select({
         key: downloadResources.key,
         updatedAt: downloadResources.updatedAt,
@@ -445,6 +469,7 @@ export const downloadResourceRepository = {
         asc(publishedRevision.sortOrder),
         asc(downloadResources.id),
       );
+    return documentPublicRows(rows);
   },
 
   async getPublicByKey(key: string) {
@@ -471,7 +496,7 @@ export const downloadResourceRepository = {
         ),
       )
       .limit(1);
-    return rows[0] ?? null;
+    return documentPublicRow(rows[0]);
   },
 
   async transaction<Result>(

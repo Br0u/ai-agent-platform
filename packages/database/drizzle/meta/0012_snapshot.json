@@ -1236,7 +1236,7 @@
         },
         "download_resource_revisions_kind_policy_check": {
           "name": "download_resource_revisions_kind_policy_check",
-          "value": "(\n        \"download_resource_revisions\".\"resource_kind\" = 'document'\n        AND \"download_resource_revisions\".\"release_version\" IS NULL\n        AND \"download_resource_revisions\".\"preview_policy\" IS NOT NULL\n      ) OR (\n        \"download_resource_revisions\".\"resource_kind\" = 'software'\n        AND length(btrim(\"download_resource_revisions\".\"release_version\")) BETWEEN 1 AND 40\n        AND \"download_resource_revisions\".\"release_version\" !~ '[[:cntrl:]]'\n        AND \"download_resource_revisions\".\"preview_policy\" IS NULL\n        AND \"download_resource_revisions\".\"download_policy\" = 'public'\n      )"
+          "value": "(\n        \"download_resource_revisions\".\"resource_kind\" = 'document'\n        AND \"download_resource_revisions\".\"release_version\" IS NULL\n        AND \"download_resource_revisions\".\"preview_policy\" IS NOT NULL\n      ) OR (\n        \"download_resource_revisions\".\"resource_kind\" = 'software'\n        AND \"download_resource_revisions\".\"release_version\" IS NOT NULL\n        AND length(btrim(\"download_resource_revisions\".\"release_version\")) BETWEEN 1 AND 40\n        AND \"download_resource_revisions\".\"release_version\" !~ '[[:cntrl:]]'\n        AND \"download_resource_revisions\".\"preview_policy\" IS NULL\n        AND \"download_resource_revisions\".\"download_policy\" = 'public'\n      )"
         }
       },
       "isRLSEnabled": false

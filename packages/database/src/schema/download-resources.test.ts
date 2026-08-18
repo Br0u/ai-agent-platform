@@ -250,6 +250,27 @@ describe("download resource schema", () => {
     );
   });
 
+  it("requires a non-null software release version in both schema and migration", () => {
+    const schema = readFileSync(
+      new URL("./download-resources.ts", import.meta.url),
+      "utf8",
+    );
+    const migration = readFileSync(
+      new URL(
+        "../../drizzle/0012_download_resource_artifacts.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    expect(schema).toMatch(
+      /resourceKind\} = 'software'[\s\S]*releaseVersion\} IS NOT NULL/u,
+    );
+    expect(migration).toMatch(
+      /resource_kind" = 'software'[\s\S]*release_version" IS NOT NULL/u,
+    );
+  });
+
   it("seeds the fixed identities and metadata-only drafts", () => {
     const migration = readFileSync(
       new URL("../../drizzle/0011_download_resources.sql", import.meta.url),

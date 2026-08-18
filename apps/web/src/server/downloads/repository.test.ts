@@ -33,7 +33,11 @@ vi.mock("drizzle-orm/node-postgres", async (importOriginal) => {
   };
 });
 
-import { downloadResourceRepository } from "./repository";
+import {
+  documentPublicRow,
+  documentPublicRows,
+  downloadResourceRepository,
+} from "./repository";
 
 const source = readFileSync(
   resolve(process.cwd(), "src/server/downloads/repository.ts"),
@@ -233,9 +237,48 @@ describe("download resource repository contract", () => {
     );
   });
 
-  it("keeps the document-only public query away from software revisions", () => {
-    expect(source).toContain('eq(downloadResources.kind, "document")');
-    expect(source).toContain('eq(publishedRevision.resourceKind, "document")');
+  it("maps only document revisions with a preview policy into the legacy public list", () => {
+    const document = {
+      resourceKind: "document" as const,
+      previewPolicy: "public" as const,
+      id: "document",
+    };
+    const software = {
+      resourceKind: "software" as const,
+      previewPolicy: null,
+      id: "software",
+    };
+    const noPreview = {
+      resourceKind: "document" as const,
+      previewPolicy: null,
+      id: "no-preview",
+    };
+
+    expect(documentPublicRows([document, software, noPreview])).toEqual([
+      document,
+    ]);
+  });
+
+  it("rejects software and null-policy revisions from the legacy public lookup", () => {
+    const document = {
+      resourceKind: "document" as const,
+      previewPolicy: "public" as const,
+      id: "document",
+    };
+    const software = {
+      resourceKind: "software" as const,
+      previewPolicy: null,
+      id: "software",
+    };
+    const noPreview = {
+      resourceKind: "document" as const,
+      previewPolicy: null,
+      id: "no-preview",
+    };
+
+    expect(documentPublicRow(document)).toBe(document);
+    expect(documentPublicRow(software)).toBeNull();
+    expect(documentPublicRow(noPreview)).toBeNull();
   });
 
   it("locks the complete active-workforce admin:downloads permission chain", () => {

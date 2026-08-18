@@ -439,10 +439,7 @@ export const downloadResourceService = {
   },
 
   async listPublicResources(): Promise<DownloadResourcePublicDto[]> {
-    const resources = (await downloadResourceRepository.listPublic()) as ({
-      key: string;
-      updatedAt: Date;
-    } & Revision)[];
+    const resources = await downloadResourceRepository.listPublic();
     return (await Promise.all(resources.map(verifiedPublic))).filter(
       (resource): resource is DownloadResourcePublicDto => resource !== null,
     );
@@ -456,9 +453,7 @@ export const downloadResourceService = {
   ) {
     if (typeof key !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(key))
       return null;
-    const resource = (await downloadResourceRepository.getPublicByKey(key)) as
-      | ({ key: string; updatedAt: Date } & Revision)
-      | null;
+    const resource = await downloadResourceRepository.getPublicByKey(key);
     if (
       !resource ||
       !completeArtifact(resource) ||

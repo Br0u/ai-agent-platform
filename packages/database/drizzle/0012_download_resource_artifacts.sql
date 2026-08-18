@@ -91,6 +91,7 @@ ALTER TABLE "download_resource_revisions" ADD CONSTRAINT "download_resource_revi
 	AND "download_resource_revisions"."preview_policy" IS NOT NULL
 ) OR (
 	"download_resource_revisions"."resource_kind" = 'software'
+	AND "download_resource_revisions"."release_version" IS NOT NULL
 	AND length(btrim("download_resource_revisions"."release_version")) BETWEEN 1 AND 40
 	AND "download_resource_revisions"."release_version" !~ '[[:cntrl:]]'
 	AND "download_resource_revisions"."preview_policy" IS NULL

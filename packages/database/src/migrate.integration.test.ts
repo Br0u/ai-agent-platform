@@ -677,6 +677,20 @@ describePostgres("concurrent production migrations", () => {
       const softwareRevisionId = softwareRevision.rows[0]?.id;
       expect(softwareRevisionId).toBeTruthy();
 
+      await expect(
+        verifier.query(
+          `INSERT INTO download_resource_revisions
+             (resource_id, resource_kind, name, product, category, resource_type,
+              description, sort_order, preview_policy, download_policy, release_version)
+           SELECT id, 'software', 'wrong-kind', '元启', 'materials', '说明书',
+                  'wrong kind', 2, NULL, 'public', '1.0.0'
+           FROM download_resources WHERE key = 'yuanqi-fullstack'`,
+        ),
+      ).rejects.toMatchObject({
+        code: "23503",
+        constraint: "download_resource_revisions_resource_kind_fk",
+      });
+
       const insertArtifact = (values: string) =>
         verifier.query(
           `INSERT INTO download_resource_artifacts
@@ -684,6 +698,14 @@ describePostgres("concurrent production migrations", () => {
               extension, media_type, byte_size, sha256, page_count, cover_object_key)
            VALUES ${values}`,
         );
+      await expect(
+        insertArtifact(
+          `('${softwareRevisionId}', 'document', 'document', 'bad.pdf', 'bad.pdf', '.pdf', 'application/pdf', 1, repeat('a', 64), 1, 'bad.webp')`,
+        ),
+      ).rejects.toMatchObject({
+        code: "23503",
+        constraint: "download_resource_artifacts_revision_kind_fk",
+      });
       await expect(
         verifier.query(
           "UPDATE download_resources SET kind = 'document' WHERE key = 'mdd2-client'",

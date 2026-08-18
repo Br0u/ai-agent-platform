@@ -141,6 +141,7 @@ export const downloadResourceRevisions = pgTable(
         AND ${table.previewPolicy} IS NOT NULL
       ) OR (
         ${table.resourceKind} = 'software'
+        AND ${table.releaseVersion} IS NOT NULL
         AND length(btrim(${table.releaseVersion})) BETWEEN 1 AND 40
         AND ${table.releaseVersion} !~ '[[:cntrl:]]'
         AND ${table.previewPolicy} IS NULL
