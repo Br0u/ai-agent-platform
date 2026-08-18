@@ -564,188 +564,202 @@ async function acquireArtifactMutationLock(pool: Pool): Promise<PoolClient> {
   }
 }
 
-export const downloadResourceRepository = {
-  async listAdmin(query: AdminDownloadQuery) {
-    return getDatabase().transaction(
-      async (databaseTx) => {
-        const filters = [];
-        if (query.search) {
-          const pattern = `%${query.search.replace(/[\\%_]/gu, "\\$&")}%`;
-          filters.push(
-            or(
-              ilike(downloadResources.key, pattern),
-              ilike(downloadResources.adminLabel, pattern),
-              ilike(publishedRevision.name, pattern),
-              ilike(draftRevision.name, pattern),
-            )!,
-          );
-        }
-        if (query.category) {
-          filters.push(
-            or(
-              eq(draftRevision.category, query.category),
-              and(
-                isNull(draftRevision.id),
-                eq(publishedRevision.category, query.category),
-              ),
-            )!,
-          );
-        }
-        if (query.state) {
-          filters.push(eq(downloadResources.state, query.state));
-        }
-        const where = filters.length === 0 ? undefined : and(...filters);
-        const order = {
-          updated_desc: desc(downloadResources.updatedAt),
-          updated_asc: asc(downloadResources.updatedAt),
-          sort_asc: asc(
-            sql`COALESCE(${draftRevision.sortOrder}, ${publishedRevision.sortOrder}, 2147483647)`,
+export function createDownloadResourceRepository(
+  databaseSource: Database | (() => Database),
+  poolSource: Pool | (() => Pool),
+) {
+  const database = () =>
+    typeof databaseSource === "function" ? databaseSource() : databaseSource;
+  const pool = () =>
+    typeof poolSource === "function" ? poolSource() : poolSource;
+  return {
+    async listAdmin(query: AdminDownloadQuery) {
+      return database().transaction(
+        async (databaseTx) => {
+          const filters = [];
+          if (query.search) {
+            const pattern = `%${query.search.replace(/[\\%_]/gu, "\\$&")}%`;
+            filters.push(
+              or(
+                ilike(downloadResources.key, pattern),
+                ilike(downloadResources.adminLabel, pattern),
+                ilike(publishedRevision.name, pattern),
+                ilike(draftRevision.name, pattern),
+              )!,
+            );
+          }
+          if (query.category) {
+            filters.push(
+              or(
+                eq(draftRevision.category, query.category),
+                and(
+                  isNull(draftRevision.id),
+                  eq(publishedRevision.category, query.category),
+                ),
+              )!,
+            );
+          }
+          if (query.state) {
+            filters.push(eq(downloadResources.state, query.state));
+          }
+          const where = filters.length === 0 ? undefined : and(...filters);
+          const order = {
+            updated_desc: desc(downloadResources.updatedAt),
+            updated_asc: asc(downloadResources.updatedAt),
+            sort_asc: asc(
+              sql`COALESCE(${draftRevision.sortOrder}, ${publishedRevision.sortOrder}, 2147483647)`,
+            ),
+          }[query.sort];
+          const base = databaseTx
+            .select(adminProjection)
+            .from(downloadResources)
+            .leftJoin(publishedRevision, cleanPublishedJoin)
+            .leftJoin(draftRevision, cleanDraftJoin);
+          const rows = await base
+            .where(where)
+            .orderBy(order, asc(downloadResources.id))
+            .limit(query.pageSize)
+            .offset((query.page - 1) * query.pageSize);
+          const totals = await databaseTx
+            .select({ total: count() })
+            .from(downloadResources)
+            .leftJoin(publishedRevision, cleanPublishedJoin)
+            .leftJoin(draftRevision, cleanDraftJoin)
+            .where(where);
+          return {
+            items: await withArtifacts(databaseTx, rows),
+            total: totals[0]?.total ?? 0,
+          };
+        },
+        { isolationLevel: "repeatable read" },
+      );
+    },
+
+    async getAdminById(id: string) {
+      return database().transaction((databaseTx) =>
+        selectAdminById(databaseTx, id),
+      );
+    },
+
+    async listPublic(): Promise<DownloadPublicResource[]> {
+      const rows = await database()
+        .select({
+          key: downloadResources.key,
+          updatedAt: downloadResources.updatedAt,
+          ...publishedRevisionColumns,
+        })
+        .from(downloadResources)
+        .innerJoin(publishedRevision, cleanPublishedJoin)
+        .where(
+          and(
+            eq(downloadResources.state, "published"),
+            eq(downloadResources.kind, publishedRevision.resourceKind),
           ),
-        }[query.sort];
-        const base = databaseTx
-          .select(adminProjection)
-          .from(downloadResources)
-          .leftJoin(publishedRevision, cleanPublishedJoin)
-          .leftJoin(draftRevision, cleanDraftJoin);
-        const rows = await base
-          .where(where)
-          .orderBy(order, asc(downloadResources.id))
-          .limit(query.pageSize)
-          .offset((query.page - 1) * query.pageSize);
-        const totals = await databaseTx
-          .select({ total: count() })
-          .from(downloadResources)
-          .leftJoin(publishedRevision, cleanPublishedJoin)
-          .leftJoin(draftRevision, cleanDraftJoin)
-          .where(where);
-        return {
-          items: await withArtifacts(databaseTx, rows),
-          total: totals[0]?.total ?? 0,
-        };
-      },
-      { isolationLevel: "repeatable read" },
-    );
-  },
-
-  async getAdminById(id: string) {
-    return getDatabase().transaction((databaseTx) =>
-      selectAdminById(databaseTx, id),
-    );
-  },
-
-  async listPublic(): Promise<DownloadPublicResource[]> {
-    const rows = await getDatabase()
-      .select({
-        key: downloadResources.key,
-        updatedAt: downloadResources.updatedAt,
-        ...publishedRevisionColumns,
-      })
-      .from(downloadResources)
-      .innerJoin(publishedRevision, cleanPublishedJoin)
-      .where(
-        and(
-          eq(downloadResources.state, "published"),
-          eq(downloadResources.kind, publishedRevision.resourceKind),
-        ),
-      )
-      .orderBy(
-        sql`CASE ${publishedRevision.category}
+        )
+        .orderBy(
+          sql`CASE ${publishedRevision.category}
           WHEN 'materials' THEN 1
           WHEN 'software' THEN 2
           WHEN 'deployment' THEN 3
           WHEN 'whitepapers' THEN 4
           ELSE 5 END`,
-        asc(publishedRevision.sortOrder),
-        asc(downloadResources.id),
+          asc(publishedRevision.sortOrder),
+          asc(downloadResources.id),
+        );
+      return database().transaction((databaseTx) =>
+        publicWithArtifacts(databaseTx, rows),
       );
-    return getDatabase().transaction((databaseTx) =>
-      publicWithArtifacts(databaseTx, rows),
-    );
-  },
+    },
 
-  async getPublicByKey(key: string): Promise<DownloadPublicResource | null> {
-    const rows = await getDatabase()
-      .select({
-        key: downloadResources.key,
-        updatedAt: downloadResources.updatedAt,
-        ...publishedRevisionColumns,
-      })
-      .from(downloadResources)
-      .innerJoin(publishedRevision, cleanPublishedJoin)
-      .where(
-        and(
-          eq(downloadResources.key, key),
-          eq(downloadResources.state, "published"),
-          eq(downloadResources.kind, publishedRevision.resourceKind),
-        ),
-      )
-      .limit(1);
-    return getDatabase().transaction(async (databaseTx) => {
-      const withLoadedArtifacts = await publicWithArtifacts(databaseTx, rows);
-      return withLoadedArtifacts[0] ?? null;
-    });
-  },
+    async getPublicByKey(key: string): Promise<DownloadPublicResource | null> {
+      const rows = await database()
+        .select({
+          key: downloadResources.key,
+          updatedAt: downloadResources.updatedAt,
+          ...publishedRevisionColumns,
+        })
+        .from(downloadResources)
+        .innerJoin(publishedRevision, cleanPublishedJoin)
+        .where(
+          and(
+            eq(downloadResources.key, key),
+            eq(downloadResources.state, "published"),
+            eq(downloadResources.kind, publishedRevision.resourceKind),
+          ),
+        )
+        .limit(1);
+      return database().transaction(async (databaseTx) => {
+        const withLoadedArtifacts = await publicWithArtifacts(databaseTx, rows);
+        return withLoadedArtifacts[0] ?? null;
+      });
+    },
 
-  async transaction<Result>(
-    work: (tx: ReturnType<typeof transactionAdapter>) => Promise<Result>,
-  ) {
-    return getDatabase().transaction((databaseTx) =>
-      work(transactionAdapter(databaseTx)),
-    );
-  },
-
-  async withArtifactMutationLock<Result>(
-    work: (tx: ReturnType<typeof transactionAdapter>) => Promise<Result>,
-    postCommitCleanup?: (result: Result) => Promise<void>,
-  ): Promise<Result> {
-    const client = await acquireArtifactMutationLock(getDatabasePool());
-    let result!: Result;
-    let failed = false;
-    let primaryError: unknown;
-    let destroyReason: Error | undefined;
-    const finalizationErrors: unknown[] = [];
-    try {
-      const pinnedDatabase = drizzle(client, { schema: databaseSchema });
-      result = await pinnedDatabase.transaction((databaseTx) =>
+    async transaction<Result>(
+      work: (tx: ReturnType<typeof transactionAdapter>) => Promise<Result>,
+    ) {
+      return database().transaction((databaseTx) =>
         work(transactionAdapter(databaseTx)),
       );
-      await postCommitCleanup?.(result);
-    } catch (error) {
-      failed = true;
-      primaryError = error;
-    } finally {
+    },
+
+    async withArtifactMutationLock<Result>(
+      work: (tx: ReturnType<typeof transactionAdapter>) => Promise<Result>,
+      postCommitCleanup?: (result: Result) => Promise<void>,
+    ): Promise<Result> {
+      const client = await acquireArtifactMutationLock(pool());
+      let result!: Result;
+      let failed = false;
+      let primaryError: unknown;
+      let destroyReason: Error | undefined;
+      const finalizationErrors: unknown[] = [];
       try {
-        const unlock = await client.query<{ unlocked: boolean }>(
-          "SELECT pg_advisory_unlock($1) AS unlocked",
-          [ARTIFACT_MUTATION_LOCK_KEY],
+        const pinnedDatabase = drizzle(client, { schema: databaseSchema });
+        result = await pinnedDatabase.transaction((databaseTx) =>
+          work(transactionAdapter(databaseTx)),
         );
-        if (unlock.rows[0]?.unlocked !== true) {
-          destroyReason = new Error(
-            "Artifact mutation advisory unlock returned false",
+        await postCommitCleanup?.(result);
+      } catch (error) {
+        failed = true;
+        primaryError = error;
+      } finally {
+        try {
+          const unlock = await client.query<{ unlocked: boolean }>(
+            "SELECT pg_advisory_unlock($1) AS unlocked",
+            [ARTIFACT_MUTATION_LOCK_KEY],
           );
-          finalizationErrors.push(destroyReason);
+          if (unlock.rows[0]?.unlocked !== true) {
+            destroyReason = new Error(
+              "Artifact mutation advisory unlock returned false",
+            );
+            finalizationErrors.push(destroyReason);
+          }
+        } catch (error) {
+          finalizationErrors.push(error);
+          destroyReason =
+            error instanceof Error
+              ? error
+              : new Error("Artifact mutation advisory unlock failed");
         }
-      } catch (error) {
-        finalizationErrors.push(error);
-        destroyReason =
-          error instanceof Error
-            ? error
-            : new Error("Artifact mutation advisory unlock failed");
+        try {
+          client.release(destroyReason);
+        } catch (error) {
+          finalizationErrors.push(error);
+        }
       }
-      try {
-        client.release(destroyReason);
-      } catch (error) {
-        finalizationErrors.push(error);
+      if (failed) {
+        await throwWithFinalizationErrors(primaryError, finalizationErrors);
       }
-    }
-    if (failed) {
-      await throwWithFinalizationErrors(primaryError, finalizationErrors);
-    }
-    if (finalizationErrors.length > 0) {
-      throw finalizationErrors.length === 1
-        ? finalizationErrors[0]
-        : new AggregateError(finalizationErrors, "Lock finalization failed");
-    }
-    return result;
-  },
-};
+      if (finalizationErrors.length > 0) {
+        throw finalizationErrors.length === 1
+          ? finalizationErrors[0]
+          : new AggregateError(finalizationErrors, "Lock finalization failed");
+      }
+      return result;
+    },
+  };
+}
+
+export const downloadResourceRepository = createDownloadResourceRepository(
+  getDatabase,
+  getDatabasePool,
+);

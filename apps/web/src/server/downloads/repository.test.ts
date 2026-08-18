@@ -32,7 +32,10 @@ vi.mock("drizzle-orm/node-postgres", async (importOriginal) => {
   };
 });
 
-import { downloadResourceRepository } from "./repository";
+import {
+  createDownloadResourceRepository,
+  downloadResourceRepository,
+} from "./repository";
 
 describe("download resource repository contract", () => {
   beforeEach(() => {
@@ -98,6 +101,20 @@ describe("download resource repository contract", () => {
       "unlock",
       "release",
     ]);
+  });
+
+  it("uses an explicitly supplied database and pool without consulting the singleton", async () => {
+    const explicitTransaction = vi.fn(async (work: (tx: object) => unknown) =>
+      work({}),
+    );
+    const repository = createDownloadResourceRepository(
+      { transaction: explicitTransaction } as never,
+      { connect: mocks.connect } as never,
+    );
+    await expect(repository.transaction(async () => "explicit")).resolves.toBe(
+      "explicit",
+    );
+    expect(explicitTransaction).toHaveBeenCalledOnce();
   });
 
   it("releases the pool connection while waiting for the artifact lock", async () => {

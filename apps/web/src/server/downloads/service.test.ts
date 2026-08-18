@@ -433,6 +433,11 @@ const upload = (id: string, expectedRowVersion = 1) => ({
   byteSize: 20,
   sha256: sha,
 });
+function currentResource(id: string): Resource {
+  const value = wiring.resources.get(id);
+  if (!value) throw new Error("Missing fake resource");
+  return value;
+}
 const draftInput = (
   id: string,
   expectedRowVersion: number,
@@ -685,6 +690,12 @@ describe("typed download artifact lifecycle", () => {
       publishes: false,
     },
     {
+      name: "missing physical cover file",
+      mutate: (revision: Revision) =>
+        wiring.files.delete(revision.artifacts[0]!.coverObjectKey!),
+      publishes: false,
+    },
+    {
       name: "missing page metadata",
       mutate: (revision: Revision) => (revision.artifacts[0]!.pageCount = null),
       publishes: false,
@@ -814,16 +825,27 @@ describe("typed download artifact lifecycle", () => {
     ]);
     const revisionId = value.draftRevisionId!;
     wiring.failRemove.add("objects/remove");
-    await downloadResourceService.discardDraft({
-      id: value.id,
-      expectedRowVersion: 1,
-    });
-    expect(wiring.audits).toContainEqual(
-      expect.objectContaining({
-        event: "download_resource.cleanup_failed",
-        metadata: expect.objectContaining({ revisionId }),
-      }),
+    await downloadResourceService.discardDraft(
+      { id: value.id, expectedRowVersion: 1 },
+      { ipAddress: "203.0.113.8", userAgent: "cleanup-test" },
     );
+    expect(wiring.audits).toContainEqual({
+      event: "download_resource.cleanup_failed",
+      actor: {
+        realm: "workforce",
+        userId: "11111111-1111-4111-8111-111111111111",
+      },
+      target: { type: "download_resource", id: value.id },
+      ipAddress: "203.0.113.8",
+      userAgent: "cleanup-test",
+      metadata: {
+        key: value.key,
+        rowVersion: 2,
+        revisionId,
+        result: "failure",
+        errorCategory: "filesystem",
+      },
+    });
   });
   it("emits complete post-CAS audit envelopes for lifecycle mutations", async () => {
     const context = { ipAddress: "203.0.113.7", userAgent: "audit-test" };
@@ -838,12 +860,36 @@ describe("typed download artifact lifecycle", () => {
       draftInput(document.id, 1, "document"),
       context,
     );
-    await downloadResourceService.publishTyped(
-      { id: document.id, expectedRowVersion: 2 },
+    const savedRevisionId = currentResource(document.id).draftRevisionId;
+    if (!savedRevisionId) throw new Error("Missing saved revision");
+    await downloadResourceService.attachUploadedArtifact(
+      {
+        id: document.id,
+        expectedRowVersion: 2,
+        slot: "document",
+        stage: {},
+        coverStage: {},
+        originalFilename: "audit.pdf",
+        extension: ".pdf",
+        mediaType: "application/pdf",
+        pageCount: 1,
+        byteSize: 10,
+        sha256: sha,
+      },
       context,
     );
-    await downloadResourceService.downline(
+    const uploadedRevisionId = currentResource(document.id).draftRevisionId;
+    if (!uploadedRevisionId) throw new Error("Missing uploaded revision");
+    await downloadResourceService.publishTyped(
       { id: document.id, expectedRowVersion: 3 },
+      context,
+    );
+    const publishedRevisionId = currentResource(
+      document.id,
+    ).publishedRevisionId;
+    if (!publishedRevisionId) throw new Error("Missing published revision");
+    await downloadResourceService.downline(
+      { id: document.id, expectedRowVersion: 4 },
       context,
     );
     const software = resource("software", [
@@ -853,6 +899,8 @@ describe("typed download artifact lifecycle", () => {
       { id: software.id, expectedRowVersion: 1, slot: "windows" },
       context,
     );
+    const removedRevisionId = currentResource(software.id).draftRevisionId;
+    if (!removedRevisionId) throw new Error("Missing removed revision");
     await downloadResourceService.discardDraft(
       { id: software.id, expectedRowVersion: 2 },
       context,
@@ -873,6 +921,7 @@ describe("typed download artifact lifecycle", () => {
     expect(events.map((entry) => entry.event)).toEqual([
       "download_resource.created",
       "download_resource.draft_saved",
+      "download_resource.uploaded",
       "download_resource.published",
       "download_resource.downlined",
       "download_resource.file_removed",
@@ -894,15 +943,49 @@ describe("typed download artifact lifecycle", () => {
         },
       });
     }
-    expect(events[0]?.metadata).toMatchObject({
-      rowVersion: 1,
-      revisionId: null,
-    });
-    expect(
-      events.slice(1).every((entry) => entry.metadata.revisionId !== null),
-    ).toBe(true);
-    expect(events.slice(1).map((entry) => entry.metadata.rowVersion)).toEqual([
-      2, 3, 4, 2, 3,
+    expect(events.map((entry) => entry.metadata)).toEqual([
+      {
+        key: "audit-complete",
+        rowVersion: 1,
+        revisionId: null,
+        result: "success",
+      },
+      {
+        key: document.key,
+        rowVersion: 2,
+        revisionId: savedRevisionId,
+        result: "success",
+      },
+      {
+        key: document.key,
+        rowVersion: 3,
+        revisionId: uploadedRevisionId,
+        result: "success",
+      },
+      {
+        key: document.key,
+        rowVersion: 4,
+        revisionId: publishedRevisionId,
+        result: "success",
+      },
+      {
+        key: document.key,
+        rowVersion: 5,
+        revisionId: publishedRevisionId,
+        result: "success",
+      },
+      {
+        key: software.key,
+        rowVersion: 2,
+        revisionId: removedRevisionId,
+        result: "success",
+      },
+      {
+        key: software.key,
+        rowVersion: 3,
+        revisionId: removedRevisionId,
+        result: "success",
+      },
     ]);
   });
   it("rolls back abort after audit and rejects stale CAS", async () => {

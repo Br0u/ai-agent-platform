@@ -1,8 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
 
-import { assertSafeIdentityMigrationTestDatabaseUrl } from "@ai-agent-platform/database";
+import {
+  assertSafeIdentityMigrationTestDatabaseUrl,
+  databaseSchema,
+} from "@ai-agent-platform/database";
 
-import { downloadResourceRepository } from "./repository";
+import { createDownloadResourceRepository } from "./repository";
 
 const requested = process.env.RUN_DOWNLOAD_RESOURCE_DB_TEST === "true";
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -15,13 +21,27 @@ const safeUrl = requested
   ? assertSafeIdentityMigrationTestDatabaseUrl(testDatabaseUrl!)
   : undefined;
 const describePostgres = safeUrl ? describe.sequential : describe.skip;
+const pool = safeUrl ? new Pool({ connectionString: safeUrl }) : undefined;
+const database = pool ? drizzle(pool, { schema: databaseSchema }) : undefined;
+const repository =
+  database && pool
+    ? createDownloadResourceRepository(database, pool)
+    : undefined;
 
 describePostgres("download resource artifact repository", () => {
+  afterEach(async () => {
+    await database?.execute(
+      sql`DELETE FROM download_resources WHERE key LIKE 'artifact-%'`,
+    );
+  });
+  afterAll(async () => {
+    await pool?.end();
+  });
   it("clones, replaces, removes, counts exclusions, and isolates CAS resources", async () => {
     const suffix = randomUUID().replaceAll("-", "");
     const key = `artifact-${suffix}`;
     const objectKey = `test/${suffix}/shared.zip`;
-    const result = await downloadResourceRepository.transaction(async (tx) => {
+    const result = await repository!.transaction(async (tx) => {
       const first = await tx.insertResource({
         key,
         adminLabel: "Artifact repository fixture",
@@ -115,10 +135,50 @@ describePostgres("download resource artifact repository", () => {
         pageCount: null,
         coverObjectKey: null,
       });
+      const documentResource = await tx.insertResource({
+        key: `${key}-document`,
+        adminLabel: "Artifact cover fixture",
+        kind: "document",
+      });
+      const documentRevision = await tx.insertRevision({
+        resourceId: documentResource.id,
+        resourceKind: "document",
+        name: "Fixture",
+        product: "Platform",
+        category: "materials",
+        resourceType: "Document",
+        description: "Repository fixture",
+        sortOrder: 0,
+        previewPolicy: "public",
+        downloadPolicy: "public",
+        releaseVersion: null,
+        createdBy: null,
+      });
+      const coverKey = `test/${suffix}/cover.webp`;
+      await tx.insertArtifact({
+        revisionId: documentRevision.id,
+        revisionKind: "document",
+        slot: "document",
+        objectKey: `test/${suffix}/document.pdf`,
+        originalFilename: "fixture.pdf",
+        extension: ".pdf",
+        mediaType: "application/pdf",
+        byteSize: 10,
+        sha256: "b".repeat(64),
+        pageCount: 1,
+        coverObjectKey: coverKey,
+      });
       const beforeExclusion = await tx.countArtifactReferences({ objectKey });
       const excluded = await tx.countArtifactReferences({
         objectKey,
         excludeRevisionIds: [source.id],
+      });
+      const coverReferences = await tx.countArtifactReferences({
+        objectKey: coverKey,
+      });
+      const excludedCoverReferences = await tx.countArtifactReferences({
+        objectKey: coverKey,
+        excludeRevisionIds: [documentRevision.id],
       });
       const updated = await tx.updateResourceCas({
         id: first.id,
@@ -140,6 +200,8 @@ describePostgres("download resource artifact repository", () => {
         removed,
         beforeExclusion,
         excluded,
+        coverReferences,
+        excludedCoverReferences,
         updated,
         stale,
       };
@@ -157,11 +219,19 @@ describePostgres("download resource artifact repository", () => {
       objectReferenceCount: 1,
       coverReferenceCount: 0,
     });
+    expect(result.coverReferences).toEqual({
+      objectReferenceCount: 0,
+      coverReferenceCount: 1,
+    });
+    expect(result.excludedCoverReferences).toEqual({
+      objectReferenceCount: 0,
+      coverReferenceCount: 0,
+    });
     expect(result.updated).toMatchObject({ rowVersion: 2 });
     expect(result.stale).toBeNull();
   });
   it("loads generic artifact rows and counts object plus cover references", async () => {
-    const result = await downloadResourceRepository.transaction(async (tx) => {
+    const result = await repository!.transaction(async (tx) => {
       const references = await tx.countArtifactReferences({
         objectKey: "missing-object",
       });
