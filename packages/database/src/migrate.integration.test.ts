@@ -125,6 +125,39 @@ describePostgres("download resource contraction migration", () => {
           slot: "document",
         },
       ]);
+      const resourceKinds = await verify.query<{
+        key: string;
+        kind: string;
+        revisionKinds: string[];
+      }>(
+        `SELECT resource.key, resource.kind::text AS kind,
+                coalesce(
+                  array_agg(revision.resource_kind::text)
+                    FILTER (WHERE revision.id IS NOT NULL),
+                  ARRAY[]::text[]
+                ) AS "revisionKinds"
+         FROM download_resources resource
+         LEFT JOIN download_resource_revisions revision
+           ON revision.resource_id = resource.id
+         GROUP BY resource.id
+         ORDER BY resource.key`,
+      );
+      expect(
+        resourceKinds.rows.find(({ key }) => key === "mdd2-client"),
+      ).toEqual({
+        key: "mdd2-client",
+        kind: "software",
+        revisionKinds: [],
+      });
+      expect(
+        resourceKinds.rows
+          .filter(({ key }) => key !== "mdd2-client")
+          .every(
+            ({ kind, revisionKinds }) =>
+              kind === "document" &&
+              revisionKinds.every((revisionKind) => revisionKind === kind),
+          ),
+      ).toBe(true);
       const columns = await verify.query<{ columnName: string }>(
         `SELECT column_name AS "columnName" FROM information_schema.columns WHERE table_name = 'download_resource_revisions'`,
       );

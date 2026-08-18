@@ -20,7 +20,7 @@ CREATE TABLE "download_resource_artifacts" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );--> statement-breakpoint
 UPDATE "download_resources"
-SET "kind" = CASE WHEN "key" = 'mdd2-client' THEN 'software' ELSE 'document' END;--> statement-breakpoint
+SET "kind" = (CASE WHEN "key" = 'mdd2-client' THEN 'software' ELSE 'document' END)::public.download_resource_kind;--> statement-breakpoint
 UPDATE "download_resource_revisions" revision
 SET "resource_kind" = resource."kind"
 FROM "download_resources" resource
