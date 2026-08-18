@@ -114,10 +114,6 @@ describe("public page context resolver", () => {
 
   it.each([
     ["404", new Response("missing", { status: 404 })],
-    [
-      "redirect",
-      new Response(null, { status: 302, headers: { location: "/product" } }),
-    ],
     ["JSON", Response.json({ private: true })],
     ["HTML without exact 200", html("<main>no</main>", { status: 201 })],
   ])(
@@ -133,6 +129,75 @@ describe("public page context resolver", () => {
       ).resolves.toBe(false);
     },
   );
+
+  it("follows one same-origin redirect to a registered public page", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 307,
+          headers: { location: "/solutions/finance-compliance" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        html("<title>解决方案</title><main>贷款合规智能审查</main>"),
+      );
+    const current = resolver(fetcher);
+
+    await expect(
+      current.load({ pathname: "/solutions", search: "" }),
+    ).resolves.toEqual({
+      pathname: "/solutions/finance-compliance",
+      search: "",
+      title: "解决方案",
+      text: "贷款合规智能审查",
+      links: [],
+    });
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      new URL("https://portal.example.com/solutions/finance-compliance"),
+      expect.objectContaining({ redirect: "manual", credentials: "omit" }),
+    );
+  });
+
+  it.each([
+    ["external", "https://evil.example/solutions/finance-compliance"],
+    ["unregistered", "/not-registered"],
+  ])(
+    "rejects a %s redirect target without fetching it",
+    async (_name, location) => {
+      const fetcher = vi.fn<typeof fetch>(
+        async () => new Response(null, { status: 307, headers: { location } }),
+      );
+
+      await expect(
+        resolver(fetcher).load({ pathname: "/solutions", search: "" }),
+      ).resolves.toBeNull();
+      expect(fetcher).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("rejects a second redirect without following it", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 307,
+          headers: { location: "/solutions/finance-compliance" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 307,
+          headers: { location: "/solutions/finance-aml" },
+        }),
+      );
+
+    await expect(
+      resolver(fetcher).load({ pathname: "/solutions", search: "" }),
+    ).resolves.toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
 
   it("accepts exact query bounds and rejects every one-over or duplicate form", async () => {
     const fetcher = vi.fn<typeof fetch>(async () => html("<main>ok</main>"));

@@ -146,6 +146,8 @@ function isAllowedPublicPath(pathname: string): boolean {
   return route?.group === "public" && route.status === "live";
 }
 
+export { isAllowedPublicPath as isAllowedAssistantPublicPath };
+
 function isValidSearch(search: string): boolean {
   if (
     codePointLength(search) > PUBLIC_PAGE_SEARCH_MAX_CODE_POINTS ||
@@ -190,6 +192,29 @@ function isHtml(response: Response): boolean {
       response.headers.get("content-type") ?? "",
     )
   );
+}
+
+function safeRedirectTarget(
+  response: Response,
+  current: URL,
+  origin: URL,
+): URL | null {
+  if (![301, 302, 303, 307, 308].includes(response.status)) return null;
+  const location = response.headers.get("location");
+  if (!location || hasAmbiguousRawPath(location)) return null;
+  try {
+    const target = new URL(location, current);
+    return target.origin === origin.origin &&
+      target.username === "" &&
+      target.password === "" &&
+      target.hash === "" &&
+      isAllowedPublicPath(target.pathname) &&
+      isValidSearch(target.search)
+      ? target
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function fixedOrigin(optionsOrigin: URL): URL {
@@ -453,16 +478,29 @@ export function createPublicPageContextResolver(
       ) {
         return null;
       }
-      const url = new URL(`${input.pathname}${input.search}`, origin);
-      const request = await anonymousGet(options.fetch, url, timeoutMs, signal);
+      let url = new URL(`${input.pathname}${input.search}`, origin);
+      let request = await anonymousGet(options.fetch, url, timeoutMs, signal);
       if (!request) return null;
-      const { response } = request;
+      let response = request.response;
       if (!isHtml(response)) {
+        const target = safeRedirectTarget(response, url, origin);
         try {
           await cancelBody(response);
-          return null;
         } finally {
           request.dispose();
+        }
+        if (!target) return null;
+        url = target;
+        request = await anonymousGet(options.fetch, url, timeoutMs, signal);
+        if (!request) return null;
+        response = request.response;
+        if (!isHtml(response)) {
+          try {
+            await cancelBody(response);
+            return null;
+          } finally {
+            request.dispose();
+          }
         }
       }
       let rawHtml: string | null;

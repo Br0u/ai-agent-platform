@@ -15,7 +15,10 @@ import {
   ASSISTANT_STREAM_MEDIA_TYPE,
   formatAssistantStreamEvent,
 } from "@/features/assistant/assistant-stream";
-import type { AssistantProvider } from "@/server/assistant/assistant-provider";
+import {
+  isAssistantNavigationIntent,
+  type AssistantProvider,
+} from "@/server/assistant/assistant-provider";
 import {
   assistantRequestLogger,
   type AssistantRequestLogger,
@@ -29,9 +32,10 @@ import {
   type AssistantRateLimitInput,
   type AssistantRateLimiter,
 } from "@/server/assistant/assistant-rate-limit";
-import type {
-  PublicPageContext,
-  PublicPageContextResolver,
+import {
+  isAllowedAssistantPublicPath,
+  type PublicPageContext,
+  type PublicPageContextResolver,
 } from "@/server/assistant/public-page-context";
 import type { resolveTrustedClientIp } from "@/server/assistant/trusted-client-ip";
 import { readBoundedJson } from "@/server/http/read-bounded-json";
@@ -39,6 +43,7 @@ import {
   createAssistantInputPolicyRepository,
   type AssistantInputPolicySnapshot,
 } from "@/server/assistant/assistant-input-policy";
+import { routeRegistry } from "@/config/routes";
 
 interface AssistantChatHandlerDependencies {
   provider?: AssistantProvider;
@@ -95,6 +100,53 @@ function rateLimitInput(
 
 class AssistantInputBlockedError extends Error {}
 
+const ASSISTANT_SITE_LOOKUP_INTENT =
+  /(?:本站|网站|网页|页面|查找|寻找|搜索|有哪些|有什么|提供哪些|提供什么)/u;
+
+function linkedPageRequest(
+  message: string,
+  page: PublicPageContext,
+): { pathname: string; search: string } | null {
+  if (
+    isAssistantNavigationIntent(message) ||
+    !ASSISTANT_SITE_LOOKUP_INTENT.test(message)
+  ) {
+    return null;
+  }
+  const compactMessage = message.replace(/\s+/gu, "");
+  const currentHref = `${page.pathname}${page.search}`;
+  const links = [
+    ...page.links,
+    ...routeRegistry
+      .filter(
+        (route) =>
+          route.group === "public" &&
+          route.status === "live" &&
+          !route.path.includes("[") &&
+          route.path !== page.pathname &&
+          !(
+            route.path === "/solutions" &&
+            page.pathname.startsWith("/solutions/")
+          ) &&
+          isAllowedAssistantPublicPath(route.path),
+      )
+      .map((route) => ({ href: route.path, label: route.title })),
+  ];
+  const link = links
+    .filter(({ href, label }) => {
+      const compactLabel = label.replace(/[\s→›»]+/gu, "");
+      return (
+        href !== currentHref &&
+        compactLabel.length >= 2 &&
+        compactMessage.includes(compactLabel)
+      );
+    })
+    .sort((left, right) => right.label.length - left.label.length)[0];
+  if (!link) return null;
+  const url = new URL(link.href, "https://assistant.invalid");
+  return { pathname: url.pathname, search: url.search };
+}
+
 export function createAssistantChatHandler(
   dependencies: AssistantChatHandlerDependencies = defaultDependencies,
 ) {
@@ -142,6 +194,7 @@ export function createAssistantChatHandler(
           throw new AssistantInputBlockedError();
         }
         let pageContext: PublicPageContext | null = null;
+        let pageActivityLabel: string | null = null;
         if (assistantRequest.page) {
           try {
             pageContext = await dependencies.pageResolver.load(
@@ -150,6 +203,27 @@ export function createAssistantChatHandler(
             );
           } catch {
             if (request.signal.aborted) throw request.signal.reason;
+          }
+          if (pageContext) {
+            pageActivityLabel = "已读取当前页面";
+            const linkedPage = linkedPageRequest(
+              assistantRequest.message,
+              pageContext,
+            );
+            if (linkedPage) {
+              try {
+                const linkedContext = await dependencies.pageResolver.load(
+                  linkedPage,
+                  request.signal,
+                );
+                if (linkedContext) {
+                  pageContext = linkedContext;
+                  pageActivityLabel = "已读取站内页面";
+                }
+              } catch {
+                if (request.signal.aborted) throw request.signal.reason;
+              }
+            }
           }
         }
         const selected = dependencies.resolveProvider
@@ -201,13 +275,13 @@ export function createAssistantChatHandler(
           };
           const stream = new ReadableStream<Uint8Array>({
             start(controller) {
-              if (pageContext) {
+              if (pageActivityLabel) {
                 controller.enqueue(
                   encoder.encode(
                     formatAssistantStreamEvent({
                       type: "activity",
                       phase: "reading",
-                      label: "已读取当前页面",
+                      label: pageActivityLabel,
                     }),
                   ),
                 );

@@ -11,6 +11,12 @@ import type { PublicPageContext } from "./public-page-context";
 
 export type { AssistantProviderReply } from "@/features/assistant/assistant-contract";
 
+const ASSISTANT_NAVIGATION_INTENT = /(?:了解|查看|打开|前往|进入|跳转到|去)/u;
+
+export function isAssistantNavigationIntent(message: string): boolean {
+  return ASSISTANT_NAVIGATION_INTENT.test(message);
+}
+
 export type AssistantProviderInvocation = {
   request: AssistantRequest;
   pageContext: PublicPageContext | null;
