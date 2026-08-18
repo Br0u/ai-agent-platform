@@ -10,11 +10,13 @@ export function PortalHeader({
   items,
   activeHref,
   assistantEntry,
+  trialEntryVisible = true,
   linkComponent: Link = "a",
 }: {
   items: PortalNavigationItem[];
   activeHref: string;
   assistantEntry?: ReactNode;
+  trialEntryVisible?: boolean;
   linkComponent?: NavigationLinkComponent;
 }) {
   return (
@@ -45,13 +47,14 @@ export function PortalHeader({
           <Link className="site-contact" href="/contact">
             联系我们
           </Link>
-          <Link className="site-trial" href="/trial">
-            申请体验
-          </Link>
+          {trialEntryVisible ? (
+            <Link className="site-trial" href="/trial">
+              申请体验
+            </Link>
+          ) : null}
           <MobileNavigation
-            actionHref="/trial"
-            actionLabel="申请体验"
             activeHref={activeHref}
+            actionVisible={trialEntryVisible}
             items={items}
             linkComponent={Link}
             secondaryActionHref="/contact"

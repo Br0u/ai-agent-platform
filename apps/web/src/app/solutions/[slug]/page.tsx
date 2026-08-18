@@ -7,6 +7,7 @@ import {
   solutionDetailSlugs,
 } from "@/components/solution-detail-content";
 import { SolutionOverview } from "@/components/solution-overview";
+import { isPublicEntryVisible } from "@/config/public-entry-policy";
 import "../solutions.css";
 import "./solution-detail.css";
 
@@ -65,9 +66,11 @@ export default async function SolutionDetailPage({ params }: PageProps) {
               >
                 商务咨询
               </Link>
-              <Link className="solution-detail-button" href="/trial">
-                申请体验
-              </Link>
+              {isPublicEntryVisible("/trial") ? (
+                <Link className="solution-detail-button" href="/trial">
+                  申请体验
+                </Link>
+              ) : null}
             </div>
           </div>
           <figure className="solution-detail-image solution-detail-image--hero">

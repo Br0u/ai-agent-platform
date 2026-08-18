@@ -42,6 +42,7 @@ export function MobileNavigation({
   activeHref,
   actionLabel = "登录 / 进入控制台",
   actionHref = "/login",
+  actionVisible = true,
   secondaryActionLabel,
   secondaryActionHref,
   linkComponent: Link = "a",
@@ -50,6 +51,7 @@ export function MobileNavigation({
   activeHref: string;
   actionLabel?: string;
   actionHref?: string;
+  actionVisible?: boolean;
   secondaryActionLabel?: string;
   secondaryActionHref?: string;
   linkComponent?: NavigationLinkComponent;
@@ -337,13 +339,15 @@ export function MobileNavigation({
                 {secondaryActionLabel}
               </Link>
             ) : null}
-            <Link
-              className="mobile-navigation__action"
-              href={actionHref}
-              onClick={closeNavigation}
-            >
-              {actionLabel}
-            </Link>
+            {actionVisible ? (
+              <Link
+                className="mobile-navigation__action"
+                href={actionHref}
+                onClick={closeNavigation}
+              >
+                {actionLabel}
+              </Link>
+            ) : null}
           </div>
         </div>
       </div>

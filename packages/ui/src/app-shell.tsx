@@ -20,6 +20,7 @@ export type AppShellProps = {
   variant: "portal" | "assistant" | "auth" | "console" | "admin";
   activeHref: string;
   portalNavigation: PortalNavigationItem[];
+  trialEntryVisible?: boolean;
   portalLinkComponent?: NavigationLinkComponent;
   consoleNavigation: SidebarNavigationConfig;
   adminNavigation: SidebarNavigationConfig;
@@ -37,6 +38,7 @@ export function AppShell({
   variant,
   activeHref,
   portalNavigation,
+  trialEntryVisible = true,
   portalLinkComponent,
   consoleNavigation,
   adminNavigation,
@@ -125,6 +127,7 @@ export function AppShell({
         assistantEntry={assistantEntry}
         items={portalNavigation}
         linkComponent={portalLinkComponent}
+        trialEntryVisible={trialEntryVisible}
       />
       <div className="site-content">{children}</div>
       {variant === "portal" ? (

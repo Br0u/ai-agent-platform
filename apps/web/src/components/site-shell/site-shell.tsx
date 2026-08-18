@@ -10,6 +10,7 @@ import {
   footerNavigation,
   portalNavigation,
 } from "../../config/navigation";
+import { filterPublicEntries } from "../../config/public-entry-policy";
 import { matchRoute } from "../../config/routes";
 import {
   customerLogoutAction,
@@ -153,9 +154,13 @@ export function SiteShell({ children }: { children: ReactNode }) {
       activeHref={activeHref}
       adminNavigation={adminNavigation}
       consoleNavigation={consoleNavigation}
-      footerNavigation={footerNavigation}
+      footerNavigation={footerNavigation.map((section) => ({
+        ...section,
+        items: filterPublicEntries(section.items),
+      }))}
       portalNavigation={portalNavigation}
       portalLinkComponent={PortalNavigationLink}
+      trialEntryVisible={false}
       variant={variant}
     >
       {variant === "portal" || variant === "assistant" ? (
@@ -340,9 +345,13 @@ function AssistantEnabledShell({
         </span>
       }
       consoleNavigation={consoleNavigation}
-      footerNavigation={footerNavigation}
+      footerNavigation={footerNavigation.map((section) => ({
+        ...section,
+        items: filterPublicEntries(section.items),
+      }))}
       portalNavigation={portalNavigation}
       portalLinkComponent={PortalNavigationLink}
+      trialEntryVisible={false}
       variant={variant}
     >
       {children}

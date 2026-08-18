@@ -105,16 +105,16 @@ describe("PortalHeader", () => {
     expect(assistant.nextElementSibling).toBe(contact);
   });
 
-  it("shows contact and trial on desktop and mobile without login or docs", () => {
-    render(<PortalHeader activeHref="/" items={items} />);
+  it("hides the trial entry on desktop and mobile without affecting contact", () => {
+    render(
+      <PortalHeader activeHref="/" items={items} trialEntryVisible={false} />,
+    );
 
-    const trial = screen.getByRole("link", { name: "申请体验" });
     expect(screen.getByRole("link", { name: "联系我们" })).toHaveAttribute(
       "href",
       "/contact",
     );
-    expect(trial).toHaveAttribute("href", "/trial");
-    expect(trial).toHaveClass("site-trial");
+    expect(screen.queryByRole("link", { name: "申请体验" })).toBeNull();
     expect(screen.queryByRole("link", { name: /登录/ })).toBeNull();
     expect(screen.queryByRole("link", { name: "文档" })).toBeNull();
 
@@ -124,8 +124,8 @@ describe("PortalHeader", () => {
       within(mobileDialog).getByRole("link", { name: "联系我们" }),
     ).toHaveAttribute("href", "/contact");
     expect(
-      within(mobileDialog).getByRole("link", { name: "申请体验" }),
-    ).toHaveAttribute("href", "/trial");
+      within(mobileDialog).queryByRole("link", { name: "申请体验" }),
+    ).toBeNull();
     expect(
       within(mobileDialog).queryByRole("link", { name: /登录/ }),
     ).toBeNull();

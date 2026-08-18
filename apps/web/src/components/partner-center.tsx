@@ -27,6 +27,7 @@ import {
   type PartnerView,
   partnerViewContent,
 } from "./partner-center-content";
+import { isPublicEntryVisible } from "../config/public-entry-policy";
 import { partnerPolicyContent } from "./partner-policy-content";
 import { PartnerIcon } from "./partner-icon";
 import {
@@ -734,31 +735,35 @@ function PartnerActions({
 }) {
   return (
     <div className="partner-actions">
-      {actions.map((action, index) =>
-        "topic" in action ? (
-          <button
-            ref={index === 0 ? entryRef : undefined}
-            type="button"
-            key={action.label}
-            onClick={(event) => onContact(action.topic, event.currentTarget)}
-          >
-            {action.label}
-          </button>
-        ) : action.href.startsWith("/partners") ? (
-          <button
-            ref={index === 0 ? entryRef : undefined}
-            type="button"
-            key={action.label}
-            onClick={() => onNavigate(action.href)}
-          >
-            {action.label}
-          </button>
-        ) : (
-          <a href={action.href} key={action.label}>
-            {action.label}
-          </a>
-        ),
-      )}
+      {actions
+        .filter(
+          (action) => !("href" in action) || isPublicEntryVisible(action.href),
+        )
+        .map((action, index) =>
+          "topic" in action ? (
+            <button
+              ref={index === 0 ? entryRef : undefined}
+              type="button"
+              key={action.label}
+              onClick={(event) => onContact(action.topic, event.currentTarget)}
+            >
+              {action.label}
+            </button>
+          ) : action.href.startsWith("/partners") ? (
+            <button
+              ref={index === 0 ? entryRef : undefined}
+              type="button"
+              key={action.label}
+              onClick={() => onNavigate(action.href)}
+            >
+              {action.label}
+            </button>
+          ) : (
+            <a href={action.href} key={action.label}>
+              {action.label}
+            </a>
+          ),
+        )}
     </div>
   );
 }
