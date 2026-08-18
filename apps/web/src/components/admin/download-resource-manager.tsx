@@ -4,6 +4,7 @@
 import { useActionState, useEffect, useRef, useState } from "react";
 
 import { DownloadSoftwareArtifacts } from "./download-software-artifacts";
+import { AssistantSkillModal } from "./assistant-skill-modal";
 import {
   createTypedDownloadResourceAction,
   discardTypedDownloadDraftAction,
@@ -56,6 +57,19 @@ function message(state: ActionState) {
 }
 function revision(resource: TypedDownloadResourceAdminDto) {
   return resource.draftRevision ?? resource.publishedRevision;
+}
+function resourceCategory(resource: TypedDownloadResourceAdminDto) {
+  return (
+    revision(resource)?.category ??
+    (resource.kind === "software" ? "software" : "materials")
+  );
+}
+function defaultPolicies(
+  category: (typeof DOWNLOAD_RESOURCE_CATEGORIES)[number],
+) {
+  return category === "materials"
+    ? { previewPolicy: "public" as const, downloadPolicy: "contact" as const }
+    : { previewPolicy: "contact" as const, downloadPolicy: "contact" as const };
 }
 function formatTime(value: string | null) {
   return value
@@ -130,6 +144,7 @@ function CreateResourceDialog({
   onClose(): void;
   onCreated(resource: TypedDownloadResourceAdminDto): void;
 }) {
+  const initialFocusRef = useRef<HTMLInputElement>(null);
   const [state, formAction, pending] = useActionState(
     createTypedDownloadResourceAction as ServerAction,
     idle,
@@ -141,62 +156,66 @@ function CreateResourceDialog({
     }
   }, [state, onCreated, onClose]);
   return (
-    <section
-      aria-label="新增下载资源"
-      className="download-resource-manager__dialog"
-      role="dialog"
+    <AssistantSkillModal
+      closeDisabled={pending}
+      initialFocusRef={initialFocusRef}
+      labelledBy="new-download-resource-heading"
+      onClose={onClose}
     >
-      <h2>新增下载资源</h2>
-      <form
-        action={formAction}
-        className="download-resource-manager__dialog-form"
-      >
-        <label>
-          资源键
-          <input
-            maxLength={120}
-            name="key"
-            pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
-            required
-          />
-        </label>
-        <label>
-          后台名称
-          <input maxLength={160} name="adminLabel" required />
-        </label>
-        <label>
-          资源类型
-          <select aria-label="资源类型" defaultValue="document" name="kind">
-            <option value="document">文档</option>
-            <option value="software">软件</option>
-          </select>
-        </label>
-        <div className="download-resource-manager__dialog-actions">
-          <button
-            className="download-resource-manager__button download-resource-manager__button--secondary"
-            disabled={pending}
-            onClick={onClose}
-            type="button"
-          >
-            取消
-          </button>
-          <button
-            className="download-resource-manager__button"
-            disabled={pending}
-            type="submit"
-          >
-            {pending ? "正在创建…" : "创建资源"}
-          </button>
-        </div>
-        <p
-          aria-live="polite"
-          className="download-resource-manager__message"
-          role="status"
+      <section className="download-resource-manager__dialog">
+        <h2 id="new-download-resource-heading">新增下载资源</h2>
+        <form
+          action={formAction}
+          className="download-resource-manager__dialog-form"
         >
-          {message(state)}
-        </p>
-      </form>
-    </section>
+          <label>
+            资源键
+            <input
+              maxLength={120}
+              name="key"
+              pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+              ref={initialFocusRef}
+              required
+            />
+          </label>
+          <label>
+            后台名称
+            <input maxLength={160} name="adminLabel" required />
+          </label>
+          <label>
+            资源类型
+            <select aria-label="资源类型" defaultValue="document" name="kind">
+              <option value="document">文档</option>
+              <option value="software">软件</option>
+            </select>
+          </label>
+          <div className="download-resource-manager__dialog-actions">
+            <button
+              className="download-resource-manager__button download-resource-manager__button--secondary"
+              disabled={pending}
+              onClick={onClose}
+              type="button"
+            >
+              取消
+            </button>
+            <button
+              className="download-resource-manager__button"
+              disabled={pending}
+              type="submit"
+            >
+              {pending ? "正在创建…" : "创建资源"}
+            </button>
+          </div>
+          <p
+            aria-live="polite"
+            className="download-resource-manager__message"
+            role="status"
+          >
+            {message(state)}
+          </p>
+        </form>
+      </section>
+    </AssistantSkillModal>
   );
 }
 
@@ -205,6 +224,7 @@ function Editor({
   uploading,
   uploadError,
   onAbortUpload,
+  onDirtyChange,
   onResource,
   onUpload,
 }: {
@@ -212,6 +232,7 @@ function Editor({
   uploading: boolean;
   uploadError: string | null;
   onAbortUpload(): void;
+  onDirtyChange(dirty: boolean): void;
   onResource(resource: TypedDownloadResourceAdminDto): void;
   onUpload(slot: Slot, file: File): void;
 }) {
@@ -221,10 +242,27 @@ function Editor({
     idle,
   );
   const [artifactError, setArtifactError] = useState("");
+  const [removingSlot, setRemovingSlot] = useState<"windows" | "macos" | null>(
+    null,
+  );
+  const [dirty, setDirty] = useState(false);
+  const [editCategory, setEditCategory] = useState(
+    current?.category ?? resourceCategory(resource),
+  );
+  const [policies, setPolicies] = useState(() =>
+    current?.kind === "document"
+      ? {
+          previewPolicy: current.previewPolicy,
+          downloadPolicy: current.downloadPolicy,
+        }
+      : defaultPolicies(resourceCategory(resource)),
+  );
+  const [explicitPolicy, setExplicitPolicy] = useState(Boolean(current));
   useEffect(() => {
     if (state.kind === "success") onResource(state.resource);
   }, [state, onResource]);
   const disabled = uploading || pending;
+  const actionsDisabled = disabled || dirty;
   const document =
     resource.kind === "document" && resource.draftRevision
       ? resource.draftRevision.artifacts[0]
@@ -248,7 +286,6 @@ function Editor({
       : Boolean(resource.draftRevision?.artifacts.length);
   const canDownline =
     resource.state === "published" && resource.draftRevision === null;
-  const documentCurrent = current?.kind === "document" ? current : null;
   const softwareCurrent = current?.kind === "software" ? current : null;
   return (
     <section
@@ -309,26 +346,54 @@ function Editor({
       ) : softwareArtifacts ? (
         <DownloadSoftwareArtifacts
           artifacts={softwareArtifacts}
-          disabled={disabled || !resource.draftRevision}
+          disabled={
+            disabled || removingSlot !== null || !resource.draftRevision
+          }
           onRemove={(slot) => {
+            setRemovingSlot(slot);
             const formData = new FormData();
             formData.set("id", resource.id);
             formData.set("expectedRowVersion", String(resource.rowVersion));
             formData.set("slot", slot);
-            void removeDownloadDraftArtifactAction(
-              { kind: "idle" },
-              formData,
-            ).then((result) => {
-              if (result.kind === "success") onResource(result.resource);
-              else setArtifactError(message(result));
-            });
+            void removeDownloadDraftArtifactAction({ kind: "idle" }, formData)
+              .then((result) => {
+                if (result.kind === "success") onResource(result.resource);
+                else setArtifactError(message(result));
+              })
+              .finally(() => setRemovingSlot(null));
           }}
           onUpload={onUpload}
         />
       ) : (
         <p>保存草稿后可上传 Windows 或 macOS 安装包。</p>
       )}
-      <form action={formAction} className="download-resource-manager__form">
+      <form
+        action={formAction}
+        className="download-resource-manager__form"
+        onChange={(event) => {
+          if (
+            event.target instanceof HTMLInputElement &&
+            event.target.type === "file"
+          )
+            return;
+          setDirty(true);
+          onDirtyChange(true);
+        }}
+        onReset={() => {
+          setDirty(false);
+          onDirtyChange(false);
+          setEditCategory(current?.category ?? resourceCategory(resource));
+          setPolicies(
+            current?.kind === "document"
+              ? {
+                  previewPolicy: current.previewPolicy,
+                  downloadPolicy: current.downloadPolicy,
+                }
+              : defaultPolicies(resourceCategory(resource)),
+          );
+          setExplicitPolicy(Boolean(current));
+        }}
+      >
         <input name="id" type="hidden" value={resource.id} />
         <input
           name="expectedRowVersion"
@@ -359,11 +424,13 @@ function Editor({
             资源分类
             <select
               aria-label="资源分类"
-              defaultValue={
-                current?.category ??
-                (resource.kind === "software" ? "software" : "materials")
-              }
+              value={editCategory}
               name="category"
+              onChange={(event) => {
+                const next = event.target.value as typeof editCategory;
+                setEditCategory(next);
+                if (!explicitPolicy) setPolicies(defaultPolicies(next));
+              }}
             >
               {DOWNLOAD_RESOURCE_CATEGORIES.map((item) => (
                 <option key={item} value={item}>
@@ -397,8 +464,21 @@ function Editor({
                 预览权限
                 <select
                   aria-label="预览权限"
-                  defaultValue={documentCurrent?.previewPolicy ?? "public"}
+                  value={policies.previewPolicy}
                   name="previewPolicy"
+                  onChange={(event) => {
+                    const previewPolicy = event.target.value as
+                      | "public"
+                      | "contact";
+                    setExplicitPolicy(true);
+                    setPolicies((value) => ({
+                      previewPolicy,
+                      downloadPolicy:
+                        previewPolicy === "contact"
+                          ? "contact"
+                          : value.downloadPolicy,
+                    }));
+                  }}
                 >
                   <option value="public">可预览</option>
                   <option value="contact">不可预览</option>
@@ -408,11 +488,25 @@ function Editor({
                 下载权限
                 <select
                   aria-label="下载权限"
-                  defaultValue={documentCurrent?.downloadPolicy ?? "contact"}
+                  value={policies.downloadPolicy}
                   name="downloadPolicy"
+                  onChange={(event) => {
+                    setExplicitPolicy(true);
+                    setPolicies((value) => ({
+                      ...value,
+                      downloadPolicy: event.target.value as
+                        | "public"
+                        | "contact",
+                    }));
+                  }}
                 >
                   <option value="contact">联系获取</option>
-                  <option value="public">可下载</option>
+                  <option
+                    disabled={policies.previewPolicy === "contact"}
+                    value="public"
+                  >
+                    可下载
+                  </option>
                 </select>
               </label>
             </>
@@ -457,7 +551,7 @@ function Editor({
               <input
                 accept="application/pdf,.pdf"
                 aria-label="上传 PDF"
-                disabled={disabled || !resource.draftRevision}
+                disabled={actionsDisabled || !resource.draftRevision}
                 onChange={(event) => {
                   const file = event.currentTarget.files?.[0];
                   if (file) onUpload("document", file);
@@ -511,31 +605,13 @@ function Editor({
           {message(state)}
         </p>
       </form>
-      {softwareArtifacts ? (
-        <div className="download-resource-manager__lifecycle">
-          {(["windows", "macos"] as const).map((slot) =>
-            softwareArtifacts[slot] ? (
-              <ActionForm
-                action={removeDownloadDraftArtifactAction as ServerAction}
-                disabled={disabled}
-                key={slot}
-                label={`移除 ${slot === "windows" ? "Windows" : "macOS"} 安装包`}
-                onResource={onResource}
-                resource={resource}
-                slot={slot}
-                tone="danger"
-              />
-            ) : null,
-          )}
-        </div>
-      ) : null}
       <div
         aria-label="资源生命周期操作"
         className="download-resource-manager__lifecycle"
       >
         <ActionForm
           action={publishTypedDownloadResourceAction as ServerAction}
-          disabled={disabled || !canPublish}
+          disabled={actionsDisabled || !canPublish}
           label="发布资源"
           onResource={onResource}
           resource={resource}
@@ -543,14 +619,14 @@ function Editor({
         />
         <ActionForm
           action={downlineTypedDownloadResourceAction as ServerAction}
-          disabled={disabled || !canDownline}
+          disabled={actionsDisabled || !canDownline}
           label="下线资源"
           onResource={onResource}
           resource={resource}
         />
         <ActionForm
           action={discardTypedDownloadDraftAction as ServerAction}
-          disabled={disabled || !resource.draftRevision}
+          disabled={actionsDisabled || !resource.draftRevision}
           label="丢弃草稿"
           onResource={onResource}
           resource={resource}
@@ -558,7 +634,7 @@ function Editor({
         {resource.kind === "document" && document ? (
           <ActionForm
             action={removeDownloadDraftArtifactAction as ServerAction}
-            disabled={disabled || !resource.draftRevision}
+            disabled={actionsDisabled || !resource.draftRevision}
             label="移除草稿文件"
             onResource={onResource}
             resource={resource}
@@ -579,7 +655,12 @@ export function DownloadResourceManager({
   const [resources, setResources] = useState(initialResources);
   const [selectedId, setSelectedId] = useState(initialResources[0]?.id ?? null);
   const [newOpen, setNewOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("");
+  const [product, setProduct] = useState("");
   const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [editingDirty, setEditingDirty] = useState(false);
   const [uploadError, setUploadError] = useState<{
     message: string;
     resourceId: string;
@@ -587,6 +668,32 @@ export function DownloadResourceManager({
   const controller = useRef<AbortController | null>(null);
   const selected =
     resources.find((resource) => resource.id === selectedId) ?? null;
+  const products = Array.from(
+    new Set(
+      resources.flatMap((resource) => {
+        const current = revision(resource);
+        return current ? [current.product] : [];
+      }),
+    ),
+  ).sort((a, b) => a.localeCompare(b, "zh-CN"));
+  const filtered = resources.filter((resource) => {
+    const current = revision(resource);
+    const text = [
+      resource.key,
+      resource.adminLabel,
+      current?.name,
+      current?.product,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLocaleLowerCase("zh-CN");
+    return (
+      (!search || text.includes(search.toLocaleLowerCase("zh-CN"))) &&
+      (!status || resource.adminStatus === status) &&
+      (!selectedCategory || resourceCategory(resource) === selectedCategory) &&
+      (!product || current?.product === product)
+    );
+  });
   const adopt = (next: TypedDownloadResourceAdminDto) =>
     setResources((current) =>
       current.map((item) => (item.id === next.id ? next : item)),
@@ -666,13 +773,84 @@ export function DownloadResourceManager({
         </div>
         <button
           className="download-resource-manager__button"
-          disabled={uploadingId !== null}
+          disabled={uploadingId !== null || editingDirty}
           onClick={() => setNewOpen(true)}
           type="button"
         >
           新增资源
         </button>
       </header>
+      <div className="download-resource-manager__filters" role="search">
+        <label>
+          搜索资源
+          <input
+            aria-label="搜索资源"
+            disabled={uploadingId !== null || editingDirty}
+            onChange={(event) => setSearch(event.target.value)}
+            type="search"
+            value={search}
+          />
+        </label>
+        <label>
+          资源状态
+          <select
+            aria-label="资源状态"
+            disabled={uploadingId !== null}
+            onChange={(event) => setStatus(event.target.value)}
+            value={status}
+          >
+            <option value="">全部状态</option>
+            {[
+              "文件失效",
+              "有待发布更改",
+              "已发布",
+              "已下线",
+              "待发布",
+              "待上传",
+              "空记录",
+            ].map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          资源分类
+          <select
+            aria-label="筛选资源分类"
+            disabled={uploadingId !== null}
+            onChange={(event) => setSelectedCategory(event.target.value)}
+            value={selectedCategory}
+          >
+            <option value="">全部分类</option>
+            {DOWNLOAD_RESOURCE_CATEGORIES.map((item) => (
+              <option key={item} value={item}>
+                {categoryLabels[item]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          筛选产品
+          <select
+            aria-label="筛选产品"
+            disabled={uploadingId !== null}
+            onChange={(event) => setProduct(event.target.value)}
+            value={product}
+          >
+            <option value="">全部产品</option>
+            {products.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="download-resource-manager__count">
+          可见资源 {filtered.length} 条
+        </span>
+      </div>
       <div className="download-resource-manager__workspace">
         <aside
           aria-label="下载资源列表"
@@ -682,10 +860,8 @@ export function DownloadResourceManager({
             <section key={category}>
               <h2>{categoryLabels[category]}</h2>
               <ul>
-                {resources
-                  .filter(
-                    (resource) => revision(resource)?.category === category,
-                  )
+                {filtered
+                  .filter((resource) => resourceCategory(resource) === category)
                   .map((resource) => (
                     <li
                       data-selected={resource.id === selectedId}
@@ -695,7 +871,7 @@ export function DownloadResourceManager({
                         aria-current={
                           resource.id === selectedId ? "page" : undefined
                         }
-                        disabled={uploadingId !== null}
+                        disabled={uploadingId !== null || editingDirty}
                         onClick={() => setSelectedId(resource.id)}
                         type="button"
                       >
@@ -716,6 +892,7 @@ export function DownloadResourceManager({
             <Editor
               key={`${selected.id}:${selected.rowVersion}`}
               onAbortUpload={() => controller.current?.abort()}
+              onDirtyChange={setEditingDirty}
               onResource={adopt}
               onUpload={(slot, file) => void upload(selected, slot, file)}
               resource={selected}

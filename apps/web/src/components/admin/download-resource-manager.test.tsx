@@ -102,6 +102,26 @@ beforeEach(() => {
 });
 
 describe("DownloadResourceManager", () => {
+  it("keeps empty software and document records navigable by their resource kind", () => {
+    const emptySoftware = {
+      ...software,
+      adminStatus: "空记录" as const,
+      draftRevision: null,
+    };
+    const emptyDocument = {
+      ...documentResource,
+      adminStatus: "空记录" as const,
+      draftRevision: null,
+    };
+    render(
+      <DownloadResourceManager resources={[emptySoftware, emptyDocument]} />,
+    );
+    expect(
+      screen.getByRole("button", { name: /码里奥桌面客户端/ }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: /产品资料/ })).toBeVisible();
+  });
+
   it("creates an immutable resource kind and renders a software release with independent slots", () => {
     render(<DownloadResourceManager resources={[software]} />);
     expect(screen.getByLabelText("版本号")).toHaveValue("v2.0.0");
@@ -142,5 +162,14 @@ describe("DownloadResourceManager", () => {
       "href",
       `/admin/downloads/preview/${documentResource.id}`,
     );
+  });
+
+  it("forces contact download when document preview is contact", () => {
+    render(<DownloadResourceManager resources={[documentResource]} />);
+    fireEvent.change(screen.getByLabelText("预览权限"), {
+      target: { value: "contact" },
+    });
+    expect(screen.getByLabelText("下载权限")).toHaveValue("contact");
+    expect(screen.getByRole("option", { name: "可下载" })).toBeDisabled();
   });
 });

@@ -21,11 +21,12 @@ export default async function AdminDownloadPreviewPage({ params }: PageProps) {
   );
   if (!parsedId.success) notFound();
 
-  const resource = await downloadResourceService.getAdminResource(
+  const resource = await downloadResourceService.getTypedAdminResource(
     parsedId.data,
   );
   const draft = resource?.draftRevision;
-  if (!resource || !draft?.pdfObjectKey) notFound();
+  if (!resource || resource.kind !== "document" || !draft?.artifacts[0])
+    notFound();
 
   return (
     <PdfViewer

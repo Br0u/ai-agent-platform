@@ -449,6 +449,13 @@ export const downloadResourceService = {
     );
     return resource ? adminDto(resource) : null;
   },
+  async getTypedAdminResource(id: unknown) {
+    await authenticated();
+    const resource = await downloadResourceRepository.getAdminById(
+      parse(mutateDownloadResourceInputSchema.shape.id, id),
+    );
+    return resource ? typedAdminDto(resource) : null;
+  },
   async createResource(rawInput: unknown, context: Context = {}) {
     const actor = await authenticated();
     const input = parse(createDownloadResourceInputSchema, rawInput);
