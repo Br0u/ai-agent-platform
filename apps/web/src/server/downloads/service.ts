@@ -7,47 +7,68 @@ import type { AuditWriteInput } from "../auth/audit";
 import { requirePermission, type WorkforceActor } from "../auth/access";
 import {
   adminDownloadQuerySchema,
+  artifactSlotSchema,
   createDownloadResourceInputSchema,
   deriveAdminStatus,
   downloadResourceAdminDtoSchema,
   downloadResourcePublicDtoSchema,
   mutateDownloadResourceInputSchema,
   saveDownloadDraftInputSchema,
+  typedCreateDownloadResourceInputSchema,
+  typedDownloadResourceAdminDtoSchema,
+  typedDownloadResourcePublicDtoSchema,
+  typedSaveDownloadDraftInputSchema,
   type DownloadResourceAdminDto,
   type DownloadResourcePublicDto,
+  type TypedDownloadResourceAdminDto,
+  type TypedDownloadResourcePublicDto,
 } from "./contracts";
 import {
   createDownloadFileStore,
   type DownloadArtifactKind,
   type DownloadStage,
+  type DownloadStageExtension,
 } from "./file-store";
 import { downloadResourceRepository } from "./repository";
 
+type Artifact = {
+  id: string;
+  revisionId: string;
+  revisionKind: "document" | "software";
+  slot: "document" | "windows" | "macos";
+  objectKey: string;
+  originalFilename: string;
+  extension: string;
+  mediaType: string;
+  byteSize: number;
+  sha256: string;
+  pageCount: number | null;
+  coverObjectKey: string | null;
+  createdAt: Date;
+};
 type Revision = {
   id: string;
   resourceId: string;
+  resourceKind: "document" | "software";
   name: string;
   product: string;
   category: "materials" | "software" | "deployment" | "whitepapers";
   resourceType: string;
   description: string;
   sortOrder: number;
-  previewPolicy: "public" | "contact";
+  previewPolicy: "public" | "contact" | null;
   downloadPolicy: "public" | "contact";
-  pdfObjectKey: string | null;
-  coverObjectKey: string | null;
-  pageCount: number | null;
-  byteSize: number | null;
-  sha256: string | null;
+  releaseVersion: string | null;
   createdAt: Date;
   publishedAt: Date | null;
   cleanupPendingAt?: Date | null;
+  artifacts: Artifact[];
 };
-
 type Resource = {
   id: string;
   key: string;
   adminLabel: string;
+  kind: "document" | "software";
   state: "unpublished" | "published" | "downline";
   publishedRevisionId: string | null;
   draftRevisionId: string | null;
@@ -57,26 +78,25 @@ type Resource = {
   publishedRevision: Revision | null;
   draftRevision: Revision | null;
 };
-
 type MutationInput = z.infer<typeof mutateDownloadResourceInputSchema>;
-type DraftMetadata = Omit<
-  z.infer<typeof saveDownloadDraftInputSchema>,
-  "id" | "expectedRowVersion"
->;
 type Transaction = Parameters<
   Parameters<typeof downloadResourceRepository.transaction>[0]
 >[0];
-type CleanupPlan = {
-  revision: Revision;
-  removePdf: boolean;
-  removeCover: boolean;
-};
+type Context = { ipAddress?: string; userAgent?: string };
 
-export type DownloadResourceRequestContext = {
-  ipAddress?: string;
-  userAgent?: string;
-};
-
+const uploadArtifactInputSchema = mutateDownloadResourceInputSchema
+  .safeExtend({
+    slot: artifactSlotSchema,
+    stage: z.unknown(),
+    originalFilename: z.string().trim().min(1).max(255),
+    extension: z.enum([".pdf", ".exe", ".msi", ".zip", ".dmg", ".pkg"]),
+    mediaType: z.string().trim().min(1).max(128),
+    byteSize: z.number().int().positive(),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/u),
+    pageCount: z.number().int().positive().optional(),
+    coverStage: z.unknown().optional(),
+  })
+  .strict();
 const attachUploadedPdfInputSchema = mutateDownloadResourceInputSchema
   .safeExtend({
     pdfStage: z.unknown(),
@@ -87,146 +107,215 @@ const attachUploadedPdfInputSchema = mutateDownloadResourceInputSchema
   })
   .strict();
 
-function inputError(field: string): never {
-  throw new Error(`DOWNLOAD_RESOURCE_INPUT_INVALID:${field}`);
-}
-
-function parse<T>(schema: z.ZodType<T>, value: unknown): T {
-  const result = schema.safeParse(value);
-  if (!result.success)
-    inputError(result.error.issues[0]?.path.join(".") || "input");
-  return result.data;
-}
-
 export const downloadResourceFileStore = createDownloadFileStore(
   process.env.DOWNLOAD_RESOURCE_ROOT,
 );
 
-function completeArtifact(revision: Revision): revision is Revision & {
-  pdfObjectKey: string;
-  coverObjectKey: string;
-  pageCount: number;
-  byteSize: number;
-  sha256: string;
-} {
+function parse<T>(schema: z.ZodType<T>, value: unknown): T {
+  const result = schema.safeParse(value);
+  if (!result.success)
+    throw new Error(
+      `DOWNLOAD_RESOURCE_INPUT_INVALID:${result.error.issues[0]?.path.join(".") || "input"}`,
+    );
+  return result.data;
+}
+function file(revision: Revision, slot: Artifact["slot"]) {
   return (
-    revision.pdfObjectKey !== null &&
-    revision.coverObjectKey !== null &&
-    revision.pageCount !== null &&
-    revision.byteSize !== null &&
-    revision.sha256 !== null
+    revision.artifacts.find((candidate) => candidate.slot === slot) ?? null
   );
 }
-
-function revisionInput(
-  resourceId: string,
-  source: Revision | null,
-  metadata: DraftMetadata,
-  actor: WorkforceActor,
-  artifacts: Partial<
-    Pick<
-      Revision,
-      "pdfObjectKey" | "coverObjectKey" | "pageCount" | "byteSize" | "sha256"
-    >
-  > = {},
-) {
-  return {
-    resourceId,
-    name: metadata.name,
-    product: metadata.product,
-    category: metadata.category,
-    resourceType: metadata.resourceType,
-    description: metadata.description,
-    sortOrder: metadata.sortOrder,
-    previewPolicy: metadata.previewPolicy,
-    downloadPolicy: metadata.downloadPolicy,
-    pdfObjectKey: artifacts.pdfObjectKey ?? source?.pdfObjectKey ?? null,
-    coverObjectKey: artifacts.coverObjectKey ?? source?.coverObjectKey ?? null,
-    pageCount: artifacts.pageCount ?? source?.pageCount ?? null,
-    byteSize: artifacts.byteSize ?? source?.byteSize ?? null,
-    sha256: artifacts.sha256 ?? source?.sha256 ?? null,
-    createdBy: actor.userId,
-  };
+function completeDocument(revision: Revision) {
+  const document = file(revision, "document");
+  return (
+    revision.resourceKind === "document" &&
+    document?.extension === ".pdf" &&
+    document.mediaType === "application/pdf" &&
+    document.pageCount !== null &&
+    document.coverObjectKey !== null
+  );
 }
-
-function contextFields(context: DownloadResourceRequestContext) {
-  return {
-    ...(context.ipAddress ? { ipAddress: context.ipAddress } : {}),
-    ...(context.userAgent ? { userAgent: context.userAgent } : {}),
-  };
+function completeSoftwareMetadata(revision: Revision) {
+  return (
+    revision.resourceKind === "software" &&
+    revision.releaseVersion !== null &&
+    revision.releaseVersion.trim().length > 0
+  );
 }
-
-function throwIfAborted(signal: AbortSignal | undefined) {
-  if (!signal?.aborted) return;
-  const error = new Error("Download upload aborted");
-  error.name = "AbortError";
-  throw error;
+function hasInstaller(revision: Revision) {
+  return revision.artifacts.some(
+    (candidate) => candidate.slot === "windows" || candidate.slot === "macos",
+  );
 }
-
-function audit(
-  event: Extract<
-    AuditWriteInput,
-    { event: `download_resource.${string}` }
-  >["event"],
-  actor: WorkforceActor,
-  resource: Resource,
-  revisionId: string | null,
-  context: DownloadResourceRequestContext,
-): AuditWriteInput {
-  const base = {
-    event,
-    actor: { realm: "workforce" as const, userId: actor.userId },
-    target: { type: "download_resource" as const, id: resource.id },
-    metadata: {
-      key: resource.key,
-      rowVersion: resource.rowVersion,
-      result: "success" as const,
-    },
-    ...contextFields(context),
-  };
-  if (event === "download_resource.created") {
-    return { ...base, event, metadata: { ...base.metadata, revisionId } };
+async function filesIntact(revision: Revision) {
+  try {
+    await Promise.all(
+      revision.artifacts.flatMap((candidate) => [
+        downloadResourceFileStore.inspect(
+          candidate.objectKey,
+          candidate.byteSize,
+        ),
+        ...(candidate.slot === "document" && candidate.coverObjectKey
+          ? [downloadResourceFileStore.inspect(candidate.coverObjectKey)]
+          : []),
+      ]),
+    );
+    return true;
+  } catch {
+    return false;
   }
-  if (revisionId === null)
-    throw new Error("Download revision audit invariant violated");
-  return {
-    ...base,
-    event,
-    metadata: { ...base.metadata, revisionId },
-  } as AuditWriteInput;
 }
-
-function cleanupAudit(
-  actor: WorkforceActor,
-  resource: Resource,
-  revision: Revision,
-  context: DownloadResourceRequestContext,
-): AuditWriteInput {
-  return {
-    event: "download_resource.cleanup_failed",
-    actor: { realm: "workforce", userId: actor.userId },
-    target: { type: "download_resource", id: resource.id },
-    metadata: {
-      key: resource.key,
-      rowVersion: resource.rowVersion,
-      revisionId: revision.id,
-      result: "failure",
-      errorCategory: "filesystem",
-    },
-    ...contextFields(context),
-  };
+async function publishable(revision: Revision) {
+  return revision.resourceKind === "document"
+    ? completeDocument(revision) && (await filesIntact(revision))
+    : completeSoftwareMetadata(revision) &&
+        hasInstaller(revision) &&
+        (await filesIntact(revision));
 }
-
 function assertCurrent(
   resource: Resource | null,
   input: MutationInput,
 ): asserts resource is Resource {
   if (!resource) throw new Error("DOWNLOAD_RESOURCE_NOT_FOUND");
-  if (resource.rowVersion !== input.expectedRowVersion) {
+  if (resource.rowVersion !== input.expectedRowVersion)
     throw new Error("DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT");
-  }
 }
 
+function revisionDto(revision: Revision) {
+  const base = {
+    id: revision.id,
+    name: revision.name,
+    product: revision.product,
+    category: revision.category,
+    resourceType: revision.resourceType,
+    description: revision.description,
+    sortOrder: revision.sortOrder,
+    createdAt: revision.createdAt.toISOString(),
+    publishedAt: revision.publishedAt?.toISOString() ?? null,
+    artifacts: revision.artifacts.map((candidate) => ({
+      slot: candidate.slot,
+      objectKey: candidate.objectKey,
+      originalFilename: candidate.originalFilename,
+      extension: candidate.extension,
+      mediaType: candidate.mediaType,
+      byteSize: candidate.byteSize,
+      sha256: candidate.sha256,
+      ...(candidate.slot === "document"
+        ? {
+            pageCount: candidate.pageCount,
+            coverObjectKey: candidate.coverObjectKey,
+          }
+        : {}),
+    })),
+  };
+  return revision.resourceKind === "document"
+    ? {
+        ...base,
+        kind: "document" as const,
+        previewPolicy: revision.previewPolicy,
+        downloadPolicy: revision.downloadPolicy,
+      }
+    : {
+        ...base,
+        kind: "software" as const,
+        releaseVersion: revision.releaseVersion,
+      };
+}
+async function typedAdminDto(
+  resource: Resource,
+): Promise<TypedDownloadResourceAdminDto> {
+  const publishedIntact = resource.publishedRevision
+    ? await filesIntact(resource.publishedRevision)
+    : false;
+  return parse(typedDownloadResourceAdminDtoSchema, {
+    id: resource.id,
+    key: resource.key,
+    adminLabel: resource.adminLabel,
+    kind: resource.kind,
+    state: resource.state,
+    rowVersion: resource.rowVersion,
+    adminStatus: deriveAdminStatus({
+      state: resource.state,
+      publishedRevision: resource.publishedRevision
+        ? {
+            pdfExists: publishedIntact,
+            coverExists: publishedIntact,
+            expectedByteSize: 1,
+            actualByteSize: publishedIntact ? 1 : 0,
+          }
+        : null,
+      draftRevision: resource.draftRevision
+        ? { hasCompleteArtifact: await publishable(resource.draftRevision) }
+        : null,
+    }),
+    publishedRevision: resource.publishedRevision
+      ? revisionDto(resource.publishedRevision)
+      : null,
+    draftRevision: resource.draftRevision
+      ? revisionDto(resource.draftRevision)
+      : null,
+    createdAt: resource.createdAt.toISOString(),
+    updatedAt: resource.updatedAt.toISOString(),
+  });
+}
+async function adminDto(resource: Resource): Promise<DownloadResourceAdminDto> {
+  const typed = await typedAdminDto(resource);
+  const project = (revision: typeof typed.publishedRevision) => {
+    if (!revision || revision.kind !== "document") return null;
+    const document = revision.artifacts[0];
+    return {
+      id: revision.id,
+      name: revision.name,
+      product: revision.product,
+      category: revision.category,
+      resourceType: revision.resourceType,
+      description: revision.description,
+      sortOrder: revision.sortOrder,
+      previewPolicy: revision.previewPolicy,
+      downloadPolicy: revision.downloadPolicy,
+      pdfObjectKey: document?.objectKey ?? null,
+      coverObjectKey:
+        document?.slot === "document" ? document.coverObjectKey : null,
+      pageCount: document?.slot === "document" ? document.pageCount : null,
+      byteSize: document?.byteSize ?? null,
+      sha256: document?.sha256 ?? null,
+      createdAt: revision.createdAt,
+      publishedAt: revision.publishedAt,
+    };
+  };
+  return parse(downloadResourceAdminDtoSchema, {
+    id: typed.id,
+    key: typed.key,
+    adminLabel: typed.adminLabel,
+    state: typed.state,
+    adminStatus: typed.adminStatus,
+    rowVersion: typed.rowVersion,
+    publishedRevision: project(typed.publishedRevision),
+    draftRevision: project(typed.draftRevision),
+    createdAt: typed.createdAt,
+    updatedAt: typed.updatedAt,
+  });
+}
+function revisionInput(
+  resource: Resource,
+  input: z.infer<typeof typedSaveDownloadDraftInputSchema>,
+  actor: WorkforceActor,
+) {
+  return {
+    resourceId: resource.id,
+    resourceKind: resource.kind,
+    name: input.name,
+    product: input.product,
+    category: input.category,
+    resourceType: input.resourceType,
+    description: input.description,
+    sortOrder: input.sortOrder,
+    previewPolicy: input.kind === "document" ? input.previewPolicy : null,
+    downloadPolicy:
+      input.kind === "document" ? input.downloadPolicy : ("public" as const),
+    releaseVersion: input.kind === "software" ? input.releaseVersion : null,
+    createdBy: actor.userId,
+  };
+}
 async function update(
   tx: Transaction,
   resource: Resource,
@@ -235,185 +324,115 @@ async function update(
   publishedRevision: Revision | null,
   draftRevision: Revision | null,
 ) {
-  const updated = (await tx.updateResourceCas({
+  const updated = await tx.updateResourceCas({
     id: resource.id,
     expectedRowVersion: input.expectedRowVersion,
     state,
     publishedRevisionId: publishedRevision?.id ?? null,
     draftRevisionId: draftRevision?.id ?? null,
-  })) as Omit<Resource, "publishedRevision" | "draftRevision"> | null;
+  });
   if (!updated) throw new Error("DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT");
-  return { ...resource, ...updated, publishedRevision, draftRevision };
+  return {
+    ...resource,
+    ...updated,
+    publishedRevision,
+    draftRevision,
+  } as Resource;
 }
-
-async function cleanupPlansForMutation(
+function audit(
+  event: Extract<
+    AuditWriteInput,
+    { event: `download_resource.${string}` }
+  >["event"],
+  actor: WorkforceActor,
+  resource: Resource,
+  revisionId: string | null,
+  context: Context,
+): AuditWriteInput {
+  return {
+    event,
+    actor: { realm: "workforce", userId: actor.userId },
+    target: { type: "download_resource", id: resource.id },
+    metadata: {
+      key: resource.key,
+      rowVersion: resource.rowVersion,
+      result: "success",
+      ...(revisionId ? { revisionId } : {}),
+    },
+    ...(context.ipAddress ? { ipAddress: context.ipAddress } : {}),
+    ...(context.userAgent ? { userAgent: context.userAgent } : {}),
+  } as AuditWriteInput;
+}
+async function cleanup(
   tx: Transaction,
   resourceId: string,
   detached: Revision | null,
 ) {
-  const pending = (await tx.listCleanupPendingRevisions(
-    resourceId,
-  )) as Revision[];
-  if (detached && !completeArtifact(detached)) {
-    await tx.deleteDetachedRevision(detached.id);
-    detached = null;
-  }
-  const candidates = detached ? [...pending, detached] : pending;
-  const plans: CleanupPlan[] = [];
-  for (const revision of candidates) {
-    const refs = await tx.countArtifactReferences({
-      pdfObjectKey: revision.pdfObjectKey!,
-      coverObjectKey: revision.coverObjectKey!,
-      excludeRevisionId: revision.id,
-    });
-    const otherCandidates = candidates.filter(
-      (candidate) => candidate.id !== revision.id,
-    );
-    const pdfReferenceCount =
-      refs.pdfReferenceCount -
-      otherCandidates.filter(
-        (candidate) => candidate.pdfObjectKey === revision.pdfObjectKey,
-      ).length;
-    const coverReferenceCount =
-      refs.coverReferenceCount -
-      otherCandidates.filter(
-        (candidate) => candidate.coverObjectKey === revision.coverObjectKey,
-      ).length;
-    if (revision.id === detached?.id) {
-      if (pdfReferenceCount > 0 && coverReferenceCount > 0) {
-        await tx.deleteDetachedRevision(revision.id);
-        continue;
-      }
-      await tx.markRevisionCleanupPending(revision.id);
-    }
-    plans.push({
-      revision,
-      removePdf: pdfReferenceCount === 0,
-      removeCover: coverReferenceCount === 0,
-    });
-  }
-  return plans;
+  if (detached) await tx.markRevisionCleanupPending(detached.id);
+  return tx.listCleanupPendingRevisions(resourceId) as Promise<Revision[]>;
 }
-
-async function cleanupPlans(
-  plans: readonly CleanupPlan[],
+async function cleanupObjects(
+  revisions: Revision[],
   actor: WorkforceActor,
   resource: Resource,
-  context: DownloadResourceRequestContext,
+  context: Context,
 ) {
-  const store = downloadResourceFileStore;
-  for (const plan of plans) {
-    try {
-      if (plan.removePdf) await store.remove(plan.revision.pdfObjectKey!);
-      if (plan.removeCover) await store.remove(plan.revision.coverObjectKey!);
-      await downloadResourceRepository.transaction((tx) =>
-        tx.deleteCleanupRevision(plan.revision.id),
+  if (revisions.length === 0) return;
+  try {
+    for (const objectKey of new Set(
+      revisions.flatMap((revision) =>
+        revision.artifacts.flatMap((candidate) => [
+          candidate.objectKey,
+          ...(candidate.coverObjectKey ? [candidate.coverObjectKey] : []),
+        ]),
+      ),
+    )) {
+      const counts = await Promise.all(
+        revisions.map((revision) =>
+          downloadResourceRepository.transaction((tx) =>
+            tx.countArtifactReferences({
+              objectKey,
+              excludeRevisionId: revision.id,
+            }),
+          ),
+        ),
       );
-    } catch {
-      const summary = "filesystem cleanup failed";
-      await downloadResourceRepository.transaction(async (tx) => {
-        await tx.setCleanupError(plan.revision.id, summary);
-        await tx.appendAudit(
-          cleanupAudit(actor, resource, plan.revision, context),
-        );
-      });
+      if (
+        counts.every(
+          (count) =>
+            count.objectReferenceCount + count.coverReferenceCount === 0,
+        )
+      )
+        await downloadResourceFileStore.remove(objectKey);
     }
+    await downloadResourceRepository.transaction(async (tx) => {
+      for (const revision of revisions) {
+        await tx.deleteArtifactsForRevision(revision.id);
+        await tx.deleteCleanupRevision(revision.id);
+      }
+    });
+  } catch {
+    await downloadResourceRepository.transaction(async (tx) => {
+      for (const revision of revisions)
+        await tx.setCleanupError(revision.id, "filesystem cleanup failed");
+      await tx.appendAudit({
+        ...audit(
+          "download_resource.cleanup_failed",
+          actor,
+          resource,
+          null,
+          context,
+        ),
+        metadata: {
+          key: resource.key,
+          rowVersion: resource.rowVersion,
+          result: "failure",
+          errorCategory: "filesystem",
+        },
+      } as AuditWriteInput);
+    });
   }
 }
-
-async function stats(revision: Revision | null) {
-  if (!revision || !completeArtifact(revision)) {
-    return { pdfExists: false, coverExists: false, actualByteSize: 0 };
-  }
-  const store = downloadResourceFileStore;
-  const [pdf, cover] = await Promise.all([
-    store.stat(revision.pdfObjectKey).catch(() => null),
-    store.stat(revision.coverObjectKey).catch(() => null),
-  ]);
-  return {
-    pdfExists: pdf !== null,
-    coverExists: cover !== null,
-    actualByteSize: pdf?.size ?? 0,
-  };
-}
-
-async function adminDto(resource: Resource): Promise<DownloadResourceAdminDto> {
-  const publishedStats = await stats(resource.publishedRevision);
-  return parse(downloadResourceAdminDtoSchema, {
-    id: resource.id,
-    key: resource.key,
-    adminLabel: resource.adminLabel,
-    state: resource.state,
-    rowVersion: resource.rowVersion,
-    adminStatus: deriveAdminStatus({
-      state: resource.state,
-      publishedRevision: resource.publishedRevision
-        ? {
-            ...publishedStats,
-            expectedByteSize: resource.publishedRevision.byteSize ?? 0,
-          }
-        : null,
-      draftRevision: resource.draftRevision
-        ? { hasCompleteArtifact: completeArtifact(resource.draftRevision) }
-        : null,
-    }),
-    publishedRevision: dtoRevision(resource.publishedRevision),
-    draftRevision: dtoRevision(resource.draftRevision),
-    createdAt: resource.createdAt.toISOString(),
-    updatedAt: resource.updatedAt.toISOString(),
-  });
-}
-
-function dtoRevision(revision: Revision | null) {
-  if (!revision) return null;
-  return {
-    id: revision.id,
-    name: revision.name,
-    product: revision.product,
-    category: revision.category,
-    resourceType: revision.resourceType,
-    description: revision.description,
-    sortOrder: revision.sortOrder,
-    previewPolicy: revision.previewPolicy,
-    downloadPolicy: revision.downloadPolicy,
-    pdfObjectKey: revision.pdfObjectKey,
-    coverObjectKey: revision.coverObjectKey,
-    pageCount: revision.pageCount,
-    byteSize: revision.byteSize,
-    sha256: revision.sha256,
-    createdAt: revision.createdAt.toISOString(),
-    publishedAt: revision.publishedAt?.toISOString() ?? null,
-  };
-}
-
-async function verifiedPublic(
-  resource: { key: string; updatedAt: Date } & Revision,
-) {
-  if (!completeArtifact(resource) || !resource.publishedAt) return null;
-  const artifactStats = await stats(resource);
-  if (
-    !artifactStats.pdfExists ||
-    !artifactStats.coverExists ||
-    artifactStats.actualByteSize !== resource.byteSize
-  )
-    return null;
-  return parse(downloadResourcePublicDtoSchema, {
-    key: resource.key,
-    name: resource.name,
-    product: resource.product,
-    category: resource.category,
-    resourceType: resource.resourceType,
-    description: resource.description,
-    sortOrder: resource.sortOrder,
-    previewPolicy: resource.previewPolicy,
-    downloadPolicy: resource.downloadPolicy,
-    coverUrl: `/api/v1/downloads/${resource.key}/cover?revision=${resource.id}`,
-    pageCount: resource.pageCount,
-    byteSize: resource.byteSize,
-    updatedAt: resource.publishedAt.toISOString(),
-  });
-}
-
 async function authenticated() {
   return requirePermission("admin:downloads");
 }
@@ -421,132 +440,157 @@ async function authenticated() {
 export const downloadResourceService = {
   async listAdminResources(rawQuery: unknown) {
     await authenticated();
-    const query = parse(adminDownloadQuerySchema, rawQuery);
-    const result = await downloadResourceRepository.listAdmin(query);
+    const result = await downloadResourceRepository.listAdmin(
+      parse(adminDownloadQuerySchema, rawQuery),
+    );
     return {
       total: result.total,
       items: await Promise.all((result.items as Resource[]).map(adminDto)),
     };
   },
-
-  async getAdminResource(id: unknown) {
+  async listTypedAdminResources(rawQuery: unknown) {
     await authenticated();
-    const parsedId = parse(mutateDownloadResourceInputSchema.shape.id, id);
-    const resource = (await downloadResourceRepository.getAdminById(
-      parsedId,
-    )) as Resource | null;
-    return resource ? adminDto(resource) : null;
-  },
-
-  async listPublicResources(): Promise<DownloadResourcePublicDto[]> {
-    const resources = await downloadResourceRepository.listPublic();
-    return (await Promise.all(resources.map(verifiedPublic))).filter(
-      (resource): resource is DownloadResourcePublicDto => resource !== null,
+    const result = await downloadResourceRepository.listAdmin(
+      parse(adminDownloadQuerySchema, rawQuery),
     );
-  },
-
-  async getPublicArtifact(
-    key: unknown,
-    kind: "cover" | "preview" | "download",
-    range?: unknown,
-    expectedRevisionId?: unknown,
-  ) {
-    if (typeof key !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(key))
-      return null;
-    const resource = await downloadResourceRepository.getPublicByKey(key);
-    if (
-      !resource ||
-      !completeArtifact(resource) ||
-      !resource.publishedAt ||
-      resource.cleanupPendingAt
-    )
-      return null;
-    if (
-      kind === "cover" &&
-      (typeof expectedRevisionId !== "string" ||
-        expectedRevisionId !== resource.id)
-    )
-      return null;
-    if (kind === "preview" && resource.previewPolicy !== "public") return null;
-    if (kind === "download" && resource.downloadPolicy !== "public")
-      return null;
-    const artifactStats = await stats(resource);
-    if (
-      !artifactStats.pdfExists ||
-      !artifactStats.coverExists ||
-      artifactStats.actualByteSize !== resource.byteSize
-    )
-      return null;
-    const objectKey =
-      kind === "cover" ? resource.coverObjectKey : resource.pdfObjectKey;
-    const opened = await downloadResourceFileStore.open(
-      objectKey,
-      range as { start: number; end: number } | undefined,
-    );
-    if (kind !== "cover" && opened.size !== resource.byteSize) {
-      opened.readable.destroy();
-      return null;
-    }
     return {
-      ...opened,
-      filename: `${resource.name}.${kind === "cover" ? "webp" : "pdf"}`,
-      revisionId: resource.id,
+      total: result.total,
+      items: await Promise.all((result.items as Resource[]).map(typedAdminDto)),
     };
   },
-
-  async getAdminDraftArtifact(
-    id: unknown,
-    kind: DownloadArtifactKind,
-    range?: unknown,
-  ) {
+  async getAdminResource(id: unknown) {
     await authenticated();
-    const parsedId = parse(mutateDownloadResourceInputSchema.shape.id, id);
-    if (kind !== "pdf" && kind !== "cover") inputError("kind");
-    const resource = (await downloadResourceRepository.getAdminById(
-      parsedId,
-    )) as Resource | null;
-    const revision = resource?.draftRevision;
-    if (!revision || !completeArtifact(revision)) return null;
-    const objectKey =
-      kind === "cover" ? revision.coverObjectKey : revision.pdfObjectKey;
-    return downloadResourceFileStore.open(
-      objectKey,
-      range as { start: number; end: number } | undefined,
+    const resource = await downloadResourceRepository.getAdminById(
+      parse(mutateDownloadResourceInputSchema.shape.id, id),
     );
+    return resource ? adminDto(resource as Resource) : null;
   },
-
-  async createResource(
-    rawInput: unknown,
-    context: DownloadResourceRequestContext = {},
-  ) {
+  async createResource(rawInput: unknown, context: Context = {}) {
     const actor = await authenticated();
     const input = parse(createDownloadResourceInputSchema, rawInput);
     return downloadResourceRepository.transaction(async (tx) => {
       await tx.assertActiveWorkforcePermission(actor.userId, "admin:downloads");
-      const created = (await tx.insertResource(input)) as Omit<
-        Resource,
-        "publishedRevision" | "draftRevision"
-      >;
-      const snapshot = {
+      const created = await tx.insertResource({ ...input, kind: "document" });
+      const resource = {
         ...created,
         publishedRevision: null,
         draftRevision: null,
-      };
+      } as Resource;
       await tx.appendAudit(
-        audit("download_resource.created", actor, snapshot, null, context),
+        audit("download_resource.created", actor, resource, null, context),
       );
-      return adminDto(snapshot);
+      return adminDto(resource);
     });
   },
-
-  async saveDraft(
-    rawInput: unknown,
-    context: DownloadResourceRequestContext = {},
-  ) {
+  async createTypedResource(rawInput: unknown, context: Context = {}) {
     const actor = await authenticated();
-    const input = parse(saveDownloadDraftInputSchema, rawInput);
-    return downloadResourceRepository
-      .withArtifactMutationLock(
+    const input = parse(typedCreateDownloadResourceInputSchema, rawInput);
+    return downloadResourceRepository.transaction(async (tx) => {
+      await tx.assertActiveWorkforcePermission(actor.userId, "admin:downloads");
+      const created = await tx.insertResource(input);
+      const resource = {
+        ...created,
+        publishedRevision: null,
+        draftRevision: null,
+      } as Resource;
+      await tx.appendAudit(
+        audit("download_resource.created", actor, resource, null, context),
+      );
+      return typedAdminDto(resource);
+    });
+  },
+  async saveDraft(rawInput: unknown, context: Context = {}) {
+    const legacy = parse(saveDownloadDraftInputSchema, rawInput);
+    return this.saveTypedDraft({ ...legacy, kind: "document" }, context).then(
+      ({ resource }) => adminDto(resource),
+    );
+  },
+  async saveTypedDraft(rawInput: unknown, context: Context = {}) {
+    const actor = await authenticated();
+    const input = parse(typedSaveDownloadDraftInputSchema, rawInput);
+    return downloadResourceRepository.withArtifactMutationLock(
+      async (tx) => {
+        await tx.assertActiveWorkforcePermission(
+          actor.userId,
+          "admin:downloads",
+        );
+        const current = (await tx.lockResource(input.id)) as Resource | null;
+        assertCurrent(current, input);
+        if (current.kind !== input.kind)
+          throw new Error("DOWNLOAD_RESOURCE_KIND_IMMUTABLE");
+        const previousDraft = current.draftRevision;
+        const source = previousDraft ?? current.publishedRevision;
+        const inserted = await tx.insertRevision(
+          revisionInput(current, input, actor),
+        );
+        const cloned = source
+          ? await tx.cloneArtifacts({
+              sourceRevisionId: source.id,
+              revisionId: inserted.id,
+              revisionKind: current.kind,
+            })
+          : [];
+        const draft = { ...inserted, artifacts: cloned } as Revision;
+        const resource = await update(
+          tx,
+          current,
+          input,
+          current.state,
+          current.publishedRevision,
+          draft,
+        );
+        const pending = await cleanup(tx, current.id, previousDraft);
+        await tx.appendAudit(
+          audit(
+            "download_resource.draft_saved",
+            actor,
+            resource,
+            draft.id,
+            context,
+          ),
+        );
+        return { dto: await typedAdminDto(resource), resource, pending };
+      },
+      async ({ resource, pending }) =>
+        cleanupObjects(pending, actor, resource, context),
+    );
+  },
+  async attachUploadedArtifact(rawInput: unknown, context: Context = {}) {
+    const actor = await authenticated();
+    const input = parse(uploadArtifactInputSchema, rawInput);
+    const revisionId = randomUUID();
+    const committed: string[] = [];
+    try {
+      const objectKey = await downloadResourceFileStore.commitArtifact(
+        input.stage as DownloadStage,
+        {
+          resourceId: input.id,
+          revisionId,
+          slot: input.slot,
+          extension: input.extension as DownloadStageExtension,
+        },
+      );
+      committed.push(objectKey);
+      let coverObjectKey: string | null = null;
+      if (input.slot === "document") {
+        if (
+          input.extension !== ".pdf" ||
+          !input.pageCount ||
+          input.coverStage === undefined
+        )
+          throw new Error("DOWNLOAD_RESOURCE_INPUT_INVALID:document");
+        coverObjectKey = await downloadResourceFileStore.commitArtifact(
+          input.coverStage as DownloadStage,
+          {
+            resourceId: input.id,
+            revisionId,
+            slot: "document",
+            extension: ".webp",
+          },
+        );
+        committed.push(coverObjectKey);
+      }
+      return await downloadResourceRepository.withArtifactMutationLock(
         async (tx) => {
           await tx.assertActiveWorkforcePermission(
             actor.userId,
@@ -554,12 +598,57 @@ export const downloadResourceService = {
           );
           const current = (await tx.lockResource(input.id)) as Resource | null;
           assertCurrent(current, input);
-          const source = current.draftRevision ?? current.publishedRevision;
+          if (
+            current.kind === "document"
+              ? input.slot !== "document"
+              : input.slot === "document"
+          )
+            throw new Error("DOWNLOAD_RESOURCE_INPUT_INVALID:slot");
           const previousDraft = current.draftRevision;
-          const draft = (await tx.insertRevision(
-            revisionInput(current.id, source, input, actor),
-          )) as Revision;
-          const updated = await update(
+          if (!previousDraft)
+            throw new Error("DOWNLOAD_RESOURCE_UPLOAD_REQUIRES_DRAFT");
+          const inserted = await tx.insertRevision({
+            resourceId: current.id,
+            resourceKind: current.kind,
+            name: previousDraft.name,
+            product: previousDraft.product,
+            category: previousDraft.category,
+            resourceType: previousDraft.resourceType,
+            description: previousDraft.description,
+            sortOrder: previousDraft.sortOrder,
+            previewPolicy: previousDraft.previewPolicy,
+            downloadPolicy: previousDraft.downloadPolicy,
+            releaseVersion: previousDraft.releaseVersion,
+            createdBy: actor.userId,
+            id: revisionId,
+          });
+          const cloned = await tx.cloneArtifacts({
+            sourceRevisionId: previousDraft.id,
+            revisionId,
+            revisionKind: current.kind,
+          });
+          const replacement = await tx.replaceArtifact({
+            revisionId,
+            revisionKind: current.kind,
+            slot: input.slot,
+            objectKey,
+            originalFilename: input.originalFilename,
+            extension: input.extension,
+            mediaType: input.mediaType,
+            byteSize: input.byteSize,
+            sha256: input.sha256,
+            pageCount:
+              input.slot === "document" ? (input.pageCount ?? null) : null,
+            coverObjectKey,
+          });
+          const draft = {
+            ...inserted,
+            artifacts: [
+              ...cloned.filter((candidate) => candidate.slot !== input.slot),
+              replacement.artifact,
+            ],
+          } as Revision;
+          const resource = await update(
             tx,
             current,
             input,
@@ -567,214 +656,104 @@ export const downloadResourceService = {
             current.publishedRevision,
             draft,
           );
-          const cleanup = await cleanupPlansForMutation(
-            tx,
-            current.id,
-            previousDraft,
-          );
+          const pending = await cleanup(tx, current.id, previousDraft);
           await tx.appendAudit(
             audit(
-              "download_resource.draft_saved",
+              "download_resource.uploaded",
               actor,
-              updated,
+              resource,
               draft.id,
               context,
             ),
           );
-          return {
-            dto: await adminDto(updated),
-            resource: updated,
-            cleanup,
-          };
+          return { dto: await typedAdminDto(resource), resource, pending };
         },
-        async ({ resource, cleanup }) =>
-          cleanupPlans(cleanup, actor, resource, context),
-      )
-      .then(({ dto }) => dto);
-  },
-
-  async attachUploadedPdf(
-    rawInput: unknown,
-    context: DownloadResourceRequestContext = {},
-    signal?: AbortSignal,
-  ) {
-    const actor = await authenticated();
-    const input = parse(attachUploadedPdfInputSchema, rawInput);
-    const store = downloadResourceFileStore;
-    const revisionId = randomUUID();
-    const committed: string[] = [];
-    let businessCommitted = false;
-    try {
-      throwIfAborted(signal);
-      return await downloadResourceRepository
-        .withArtifactMutationLock(
-          async (tx) => {
-            await tx.assertActiveWorkforcePermission(
-              actor.userId,
-              "admin:downloads",
-            );
-            const current = (await tx.lockResource(
-              input.id,
-            )) as Resource | null;
-            assertCurrent(current, input);
-            if (!current.draftRevision)
-              throw new Error("DOWNLOAD_RESOURCE_UPLOAD_REQUIRES_DRAFT");
-            const previousDraft = current.draftRevision;
-            throwIfAborted(signal);
-            const pdfObjectKey = await store.commit(
-              input.pdfStage as DownloadStage,
-              { resourceId: current.id, revisionId, kind: "pdf" },
-            );
-            committed.push(pdfObjectKey);
-            throwIfAborted(signal);
-            const coverObjectKey = await store.commit(
-              input.coverStage as DownloadStage,
-              { resourceId: current.id, revisionId, kind: "cover" },
-            );
-            committed.push(coverObjectKey);
-            throwIfAborted(signal);
-            const draft = (await tx.insertRevision({
-              ...revisionInput(
-                current.id,
-                current.draftRevision,
-                current.draftRevision,
-                actor,
-                {
-                  pdfObjectKey,
-                  coverObjectKey,
-                  pageCount: input.pageCount,
-                  byteSize: input.byteSize,
-                  sha256: input.sha256,
-                },
-              ),
-              id: revisionId,
-            })) as Revision;
-            throwIfAborted(signal);
-            const updated = await update(
-              tx,
-              current,
-              input,
-              current.state,
-              current.publishedRevision,
-              draft,
-            );
-            const cleanup = await cleanupPlansForMutation(
-              tx,
-              current.id,
-              previousDraft,
-            );
-            await tx.appendAudit(
-              audit(
-                "download_resource.uploaded",
-                actor,
-                updated,
-                draft.id,
-                context,
-              ),
-            );
-            throwIfAborted(signal);
-            const dto = await adminDto(updated);
-            throwIfAborted(signal);
-            return {
-              dto,
-              resource: updated,
-              cleanup,
-            };
-          },
-          async ({ resource, cleanup }) => {
-            businessCommitted = true;
-            await cleanupPlans(cleanup, actor, resource, context);
-          },
-        )
-        .then(({ dto }) => dto);
+        async ({ resource, pending }) =>
+          cleanupObjects(pending, actor, resource, context),
+      );
     } catch (error) {
-      if (businessCommitted) throw error;
-      const cleanupErrors: unknown[] = [];
-      for (const key of committed) {
-        await store.remove(key).catch((cleanupError: unknown) => {
-          cleanupErrors.push(cleanupError);
-        });
-      }
-      if (cleanupErrors.length > 0) {
-        throw new AggregateError(
-          [error, ...cleanupErrors],
-          "Upload artifact compensation failed",
-        );
-      }
+      await Promise.all(
+        committed.map((key) =>
+          downloadResourceFileStore.remove(key).catch(() => undefined),
+        ),
+      );
       throw error;
     }
   },
-
-  async publish(
+  async attachUploadedPdf(
     rawInput: unknown,
-    context: DownloadResourceRequestContext = {},
+    context: Context = {},
+    _signal?: AbortSignal,
   ) {
+    void _signal;
+    const input = parse(attachUploadedPdfInputSchema, rawInput);
+    return this.attachUploadedArtifact(
+      {
+        ...input,
+        slot: "document",
+        stage: input.pdfStage,
+        coverStage: input.coverStage,
+        originalFilename: "document.pdf",
+        extension: ".pdf",
+        mediaType: "application/pdf",
+      },
+      context,
+    ).then(({ resource }) => adminDto(resource));
+  },
+  async publishTyped(rawInput: unknown, context: Context = {}) {
     const actor = await authenticated();
     const input = parse(mutateDownloadResourceInputSchema, rawInput);
-    return downloadResourceRepository
-      .withArtifactMutationLock(
-        async (tx) => {
-          await tx.assertActiveWorkforcePermission(
-            actor.userId,
-            "admin:downloads",
-          );
-          const current = (await tx.lockResource(input.id)) as Resource | null;
-          assertCurrent(current, input);
-          const draft = current.draftRevision;
-          const previousPublished = current.publishedRevision;
-          if (!draft || !completeArtifact(draft))
-            throw new Error("DOWNLOAD_RESOURCE_NOT_PUBLISHABLE");
-          const actual = await stats(draft);
-          if (
-            !actual.pdfExists ||
-            !actual.coverExists ||
-            actual.actualByteSize !== draft.byteSize
-          )
-            throw new Error("DOWNLOAD_RESOURCE_NOT_PUBLISHABLE");
-          const updated = await update(
-            tx,
-            current,
-            input,
-            "published",
-            draft,
-            null,
-          );
-          const publishedRevision = (await tx.markRevisionPublished(
+    return downloadResourceRepository.withArtifactMutationLock(
+      async (tx) => {
+        await tx.assertActiveWorkforcePermission(
+          actor.userId,
+          "admin:downloads",
+        );
+        const current = (await tx.lockResource(input.id)) as Resource | null;
+        assertCurrent(current, input);
+        const draft = current.draftRevision;
+        if (!draft || !(await publishable(draft)))
+          throw new Error("DOWNLOAD_RESOURCE_NOT_PUBLISHABLE");
+        const updated = await update(
+          tx,
+          current,
+          input,
+          "published",
+          draft,
+          null,
+        );
+        const published = await tx.markRevisionPublished(draft.id);
+        if (!published) throw new Error("DOWNLOAD_RESOURCE_NOT_PUBLISHABLE");
+        const resource = {
+          ...updated,
+          publishedRevision: { ...published, artifacts: draft.artifacts },
+        } as Resource;
+        const pending = await cleanup(
+          tx,
+          current.id,
+          current.publishedRevision,
+        );
+        await tx.appendAudit(
+          audit(
+            "download_resource.published",
+            actor,
+            resource,
             draft.id,
-          )) as Revision | null;
-          if (!publishedRevision)
-            throw new Error("DOWNLOAD_RESOURCE_NOT_PUBLISHABLE");
-          const published = { ...updated, publishedRevision };
-          const cleanup = await cleanupPlansForMutation(
-            tx,
-            current.id,
-            previousPublished,
-          );
-          await tx.appendAudit(
-            audit(
-              "download_resource.published",
-              actor,
-              published,
-              draft.id,
-              context,
-            ),
-          );
-          return {
-            dto: await adminDto(published),
-            resource: published,
-            cleanup,
-          };
-        },
-        async ({ resource, cleanup }) =>
-          cleanupPlans(cleanup, actor, resource, context),
-      )
-      .then(({ dto }) => dto);
+            context,
+          ),
+        );
+        return { dto: await typedAdminDto(resource), resource, pending };
+      },
+      async ({ resource, pending }) =>
+        cleanupObjects(pending, actor, resource, context),
+    );
   },
-
-  async downline(
-    rawInput: unknown,
-    context: DownloadResourceRequestContext = {},
-  ) {
+  async publish(rawInput: unknown, context: Context = {}) {
+    return this.publishTyped(rawInput, context).then(({ resource }) =>
+      adminDto(resource),
+    );
+  },
+  async downline(rawInput: unknown, context: Context = {}) {
     const actor = await authenticated();
     const input = parse(mutateDownloadResourceInputSchema, rawInput);
     return downloadResourceRepository
@@ -792,40 +771,35 @@ export const downloadResourceService = {
             current.draftRevision
           )
             throw new Error("DOWNLOAD_RESOURCE_NOT_DOWNLINEABLE");
-          const publishedRevision = current.publishedRevision;
-          const updated = await update(
+          const resource = await update(
             tx,
             current,
             input,
             "downline",
             null,
-            publishedRevision,
+            current.publishedRevision,
           );
           await tx.appendAudit(
             audit(
               "download_resource.downlined",
               actor,
-              updated,
-              publishedRevision.id,
+              resource,
+              current.publishedRevision.id,
               context,
             ),
           );
           return {
-            dto: await adminDto(updated),
-            resource: updated,
-            cleanup: await cleanupPlansForMutation(tx, current.id, null),
+            resource,
+            dto: await adminDto(resource),
+            pending: [] as Revision[],
           };
         },
-        async ({ resource, cleanup }) =>
-          cleanupPlans(cleanup, actor, resource, context),
+        async ({ resource, pending }) =>
+          cleanupObjects(pending, actor, resource, context),
       )
       .then(({ dto }) => dto);
   },
-
-  async discardDraft(
-    rawInput: unknown,
-    context: DownloadResourceRequestContext = {},
-  ) {
+  async discardDraft(rawInput: unknown, context: Context = {}) {
     const actor = await authenticated();
     const input = parse(mutateDownloadResourceInputSchema, rawInput);
     return downloadResourceRepository
@@ -840,97 +814,257 @@ export const downloadResourceService = {
           if (!current.draftRevision)
             throw new Error("DOWNLOAD_RESOURCE_NO_DRAFT");
           const previousDraft = current.draftRevision;
-          const state =
-            current.state === "downline" ? "unpublished" : current.state;
-          const updated = await update(
+          const resource = await update(
             tx,
             current,
             input,
-            state,
+            current.state === "downline" ? "unpublished" : current.state,
             current.publishedRevision,
             null,
           );
-          const cleanup = await cleanupPlansForMutation(
-            tx,
-            current.id,
-            previousDraft,
-          );
+          const pending = await cleanup(tx, current.id, previousDraft);
           await tx.appendAudit(
             audit(
               "download_resource.draft_discarded",
               actor,
-              updated,
+              resource,
               previousDraft.id,
               context,
             ),
           );
-          return {
-            dto: await adminDto(updated),
-            resource: updated,
-            cleanup,
-          };
+          return { resource, dto: await adminDto(resource), pending };
         },
-        async ({ resource, cleanup }) =>
-          cleanupPlans(cleanup, actor, resource, context),
+        async ({ resource, pending }) =>
+          cleanupObjects(pending, actor, resource, context),
       )
       .then(({ dto }) => dto);
   },
-
-  async removeDraftFile(
-    rawInput: unknown,
-    context: DownloadResourceRequestContext = {},
-  ) {
+  async removeDraftArtifact(rawInput: unknown, context: Context = {}) {
     const actor = await authenticated();
+    const input = parse(
+      mutateDownloadResourceInputSchema
+        .safeExtend({ slot: artifactSlotSchema })
+        .strict(),
+      rawInput,
+    );
+    return downloadResourceRepository.withArtifactMutationLock(
+      async (tx) => {
+        await tx.assertActiveWorkforcePermission(
+          actor.userId,
+          "admin:downloads",
+        );
+        const current = (await tx.lockResource(input.id)) as Resource | null;
+        assertCurrent(current, input);
+        const previousDraft = current.draftRevision;
+        if (
+          !previousDraft ||
+          (current.kind === "document"
+            ? input.slot !== "document"
+            : input.slot === "document")
+        )
+          throw new Error("DOWNLOAD_RESOURCE_FILE_NOT_REMOVABLE");
+        const inserted = await tx.insertRevision({
+          resourceId: current.id,
+          resourceKind: current.kind,
+          name: previousDraft.name,
+          product: previousDraft.product,
+          category: previousDraft.category,
+          resourceType: previousDraft.resourceType,
+          description: previousDraft.description,
+          sortOrder: previousDraft.sortOrder,
+          previewPolicy: previousDraft.previewPolicy,
+          downloadPolicy: previousDraft.downloadPolicy,
+          releaseVersion: previousDraft.releaseVersion,
+          createdBy: actor.userId,
+        });
+        const cloned = await tx.cloneArtifacts({
+          sourceRevisionId: previousDraft.id,
+          revisionId: inserted.id,
+          revisionKind: current.kind,
+        });
+        const removed = await tx.removeArtifact({
+          revisionId: inserted.id,
+          slot: input.slot,
+        });
+        if (!removed) throw new Error("DOWNLOAD_RESOURCE_FILE_NOT_REMOVABLE");
+        const draft = {
+          ...inserted,
+          artifacts: cloned.filter(
+            (candidate) => candidate.slot !== input.slot,
+          ),
+        } as Revision;
+        const resource = await update(
+          tx,
+          current,
+          input,
+          current.state,
+          current.publishedRevision,
+          draft,
+        );
+        const pending = await cleanup(tx, current.id, previousDraft);
+        await tx.appendAudit(
+          audit(
+            "download_resource.file_removed",
+            actor,
+            resource,
+            draft.id,
+            context,
+          ),
+        );
+        return { dto: await typedAdminDto(resource), resource, pending };
+      },
+      async ({ resource, pending }) =>
+        cleanupObjects(pending, actor, resource, context),
+    );
+  },
+  async removeDraftFile(rawInput: unknown, context: Context = {}) {
     const input = parse(mutateDownloadResourceInputSchema, rawInput);
-    return downloadResourceRepository
-      .withArtifactMutationLock(
-        async (tx) => {
-          await tx.assertActiveWorkforcePermission(
-            actor.userId,
-            "admin:downloads",
-          );
-          const current = (await tx.lockResource(input.id)) as Resource | null;
-          assertCurrent(current, input);
+    return this.removeDraftArtifact(
+      { ...input, slot: "document" },
+      context,
+    ).then(({ resource }) => adminDto(resource));
+  },
+  async listTypedPublicResources(): Promise<TypedDownloadResourcePublicDto[]> {
+    const resources = await downloadResourceRepository.listPublic();
+    const published = await Promise.all(
+      resources.map(async (row) => {
+        const revision = row as { key: string } & Revision;
+        if (!revision.publishedAt || !(await publishable(revision)))
+          return null;
+        if (revision.resourceKind === "document") {
+          const document = file(revision, "document");
           if (
-            !current.draftRevision ||
-            !completeArtifact(current.draftRevision)
+            !document ||
+            !document.coverObjectKey ||
+            document.pageCount === null ||
+            revision.previewPolicy === null
           )
-            throw new Error("DOWNLOAD_RESOURCE_FILE_NOT_REMOVABLE");
-          const previousDraft = current.draftRevision;
-          const draft = (await tx.insertRevision(
-            revisionInput(current.id, null, previousDraft, actor),
-          )) as Revision;
-          const updated = await update(
-            tx,
-            current,
-            input,
-            current.state,
-            current.publishedRevision,
-            draft,
-          );
-          const cleanup = await cleanupPlansForMutation(
-            tx,
-            current.id,
-            previousDraft,
-          );
-          await tx.appendAudit(
-            audit(
-              "download_resource.file_removed",
-              actor,
-              updated,
-              draft.id,
-              context,
-            ),
-          );
-          return {
-            dto: await adminDto(updated),
-            resource: updated,
-            cleanup,
-          };
-        },
-        async ({ resource, cleanup }) =>
-          cleanupPlans(cleanup, actor, resource, context),
+            return null;
+          return parse(typedDownloadResourcePublicDtoSchema, {
+            kind: "document",
+            key: row.key,
+            name: revision.name,
+            product: revision.product,
+            category: revision.category,
+            resourceType: revision.resourceType,
+            description: revision.description,
+            sortOrder: revision.sortOrder,
+            previewPolicy: revision.previewPolicy,
+            downloadPolicy: revision.downloadPolicy,
+            coverUrl: `/api/v1/downloads/${row.key}/cover?revision=${revision.id}`,
+            pageCount: document.pageCount,
+            byteSize: document.byteSize,
+            updatedAt: revision.publishedAt.toISOString(),
+          });
+        }
+        const windows = file(revision, "windows");
+        const macos = file(revision, "macos");
+        if (!windows && !macos) return null;
+        return parse(typedDownloadResourcePublicDtoSchema, {
+          kind: "software",
+          key: row.key,
+          name: revision.name,
+          product: revision.product,
+          category: revision.category,
+          resourceType: revision.resourceType,
+          description: revision.description,
+          sortOrder: revision.sortOrder,
+          releaseVersion: revision.releaseVersion,
+          platforms: {
+            windows: windows
+              ? {
+                  filename: windows.originalFilename,
+                  byteSize: windows.byteSize,
+                  downloadUrl: `/api/v1/downloads/${row.key}/windows`,
+                }
+              : null,
+            macos: macos
+              ? {
+                  filename: macos.originalFilename,
+                  byteSize: macos.byteSize,
+                  downloadUrl: `/api/v1/downloads/${row.key}/macos`,
+                }
+              : null,
+          },
+          updatedAt: revision.publishedAt.toISOString(),
+        });
+      }),
+    );
+    return published.filter(
+      (item): item is TypedDownloadResourcePublicDto => item !== null,
+    );
+  },
+  async listPublicResources(): Promise<DownloadResourcePublicDto[]> {
+    const typed = await this.listTypedPublicResources();
+    return typed
+      .filter(
+        (
+          resource,
+        ): resource is Extract<
+          TypedDownloadResourcePublicDto,
+          { kind: "document" }
+        > => resource.kind === "document",
       )
-      .then(({ dto }) => dto);
+      .map(({ kind: _kind, ...resource }) => {
+        void _kind;
+        return parse(downloadResourcePublicDtoSchema, resource);
+      });
+  },
+  async getPublicArtifact(
+    key: unknown,
+    kind: "cover" | "preview" | "download",
+    range?: unknown,
+    expectedRevisionId?: unknown,
+  ) {
+    if (typeof key !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(key))
+      return null;
+    const resource = (await downloadResourceRepository.getPublicByKey(key)) as
+      | ({ key: string } & Revision)
+      | null;
+    if (
+      !resource ||
+      resource.resourceKind !== "document" ||
+      !resource.publishedAt ||
+      !(await publishable(resource))
+    )
+      return null;
+    const document = file(resource, "document");
+    if (
+      !document ||
+      !document.coverObjectKey ||
+      (kind === "cover" && expectedRevisionId !== resource.id) ||
+      (kind === "preview" && resource.previewPolicy !== "public") ||
+      (kind === "download" && resource.downloadPolicy !== "public")
+    )
+      return null;
+    const opened = await downloadResourceFileStore.open(
+      kind === "cover" ? document.coverObjectKey : document.objectKey,
+      range as { start: number; end: number } | undefined,
+    );
+    return {
+      ...opened,
+      filename: `${resource.name}.${kind === "cover" ? "webp" : "pdf"}`,
+      revisionId: resource.id,
+    };
+  },
+  async getAdminDraftArtifact(
+    id: unknown,
+    kind: DownloadArtifactKind,
+    range?: unknown,
+  ) {
+    await authenticated();
+    if (kind !== "pdf" && kind !== "cover")
+      throw new Error("DOWNLOAD_RESOURCE_INPUT_INVALID:kind");
+    const resource = (await downloadResourceRepository.getAdminById(
+      parse(mutateDownloadResourceInputSchema.shape.id, id),
+    )) as Resource | null;
+    const document = resource?.draftRevision
+      ? file(resource.draftRevision, "document")
+      : null;
+    if (!document || !document.coverObjectKey) return null;
+    return downloadResourceFileStore.open(
+      kind === "cover" ? document.coverObjectKey : document.objectKey,
+      range as { start: number; end: number } | undefined,
+    );
   },
 };

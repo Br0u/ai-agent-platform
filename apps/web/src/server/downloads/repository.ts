@@ -10,6 +10,7 @@ import {
   eq,
   getTableColumns,
   ilike,
+  inArray,
   isNotNull,
   isNull,
   or,
@@ -21,6 +22,7 @@ import type { Pool, PoolClient } from "pg";
 
 import {
   databaseSchema,
+  downloadResourceArtifacts,
   downloadResourceRevisions,
   downloadResources,
   getDatabase,
@@ -46,39 +48,17 @@ type DatabaseTransaction = Parameters<
   Parameters<Database["transaction"]>[0]
 >[0];
 type RevisionInsert = typeof downloadResourceRevisions.$inferInsert;
+type ArtifactInsert = typeof downloadResourceArtifacts.$inferInsert;
 type ResourceState = typeof downloadResources.$inferSelect.state;
 
 const publishedRevisionColumns = getTableColumns(publishedRevision);
 const draftRevisionColumns = getTableColumns(draftRevision);
 
-type PublicRevisionRow = {
-  resourceKind: "document" | "software";
-  previewPolicy: "public" | "contact" | null;
-};
-
-function isDocumentPublicRow<Row extends PublicRevisionRow>(
-  row: Row,
-): row is Row & {
-  resourceKind: "document";
-  previewPolicy: "public" | "contact";
-} {
-  return row.resourceKind === "document" && row.previewPolicy !== null;
-}
-
-export function documentPublicRows<Row extends PublicRevisionRow>(rows: Row[]) {
-  return rows.filter(isDocumentPublicRow);
-}
-
-export function documentPublicRow<Row extends PublicRevisionRow>(
-  row: Row | undefined,
-) {
-  return row && isDocumentPublicRow(row) ? row : null;
-}
-
 const adminProjection = {
   id: downloadResources.id,
   key: downloadResources.key,
   adminLabel: downloadResources.adminLabel,
+  kind: downloadResources.kind,
   state: downloadResources.state,
   publishedRevisionId: downloadResources.publishedRevisionId,
   draftRevisionId: downloadResources.draftRevisionId,
@@ -88,6 +68,80 @@ const adminProjection = {
   publishedRevision: publishedRevisionColumns,
   draftRevision: draftRevisionColumns,
 } as const;
+
+async function withArtifacts<
+  Row extends {
+    publishedRevision: { id: string } | null;
+    draftRevision: { id: string } | null;
+  },
+>(databaseTx: DatabaseTransaction, rows: Row[]) {
+  const revisionIds = rows.flatMap((row) =>
+    [row.publishedRevision?.id, row.draftRevision?.id].filter(
+      (id): id is string => id !== undefined,
+    ),
+  );
+  if (revisionIds.length === 0) {
+    return rows.map((row) => ({
+      ...row,
+      publishedRevision: row.publishedRevision
+        ? { ...row.publishedRevision, artifacts: [] }
+        : null,
+      draftRevision: row.draftRevision
+        ? { ...row.draftRevision, artifacts: [] }
+        : null,
+    }));
+  }
+  const artifacts = await databaseTx
+    .select()
+    .from(downloadResourceArtifacts)
+    .where(inArray(downloadResourceArtifacts.revisionId, revisionIds));
+  const byRevision = new Map<string, typeof artifacts>();
+  for (const artifact of artifacts) {
+    const entries = byRevision.get(artifact.revisionId) ?? [];
+    entries.push(artifact);
+    byRevision.set(artifact.revisionId, entries);
+  }
+  return rows.map((row) => ({
+    ...row,
+    publishedRevision: row.publishedRevision
+      ? {
+          ...row.publishedRevision,
+          artifacts: byRevision.get(row.publishedRevision.id) ?? [],
+        }
+      : null,
+    draftRevision: row.draftRevision
+      ? {
+          ...row.draftRevision,
+          artifacts: byRevision.get(row.draftRevision.id) ?? [],
+        }
+      : null,
+  }));
+}
+
+async function publicWithArtifacts<
+  Row extends { id: string; resourceKind: "document" | "software" },
+>(databaseTx: DatabaseTransaction, rows: Row[]) {
+  if (rows.length === 0) return rows.map((row) => ({ ...row, artifacts: [] }));
+  const artifacts = await databaseTx
+    .select()
+    .from(downloadResourceArtifacts)
+    .where(
+      inArray(
+        downloadResourceArtifacts.revisionId,
+        rows.map((row) => row.id),
+      ),
+    );
+  const byRevision = new Map<string, typeof artifacts>();
+  for (const artifact of artifacts) {
+    const entries = byRevision.get(artifact.revisionId) ?? [];
+    entries.push(artifact);
+    byRevision.set(artifact.revisionId, entries);
+  }
+  return rows.map((row) => ({
+    ...row,
+    artifacts: byRevision.get(row.id) ?? [],
+  }));
+}
 
 const cleanPublishedJoin = and(
   eq(publishedRevision.resourceId, downloadResources.id),
@@ -134,7 +188,7 @@ async function selectAdminById(databaseTx: DatabaseTransaction, id: string) {
     .leftJoin(draftRevision, cleanDraftJoin)
     .where(eq(downloadResources.id, id))
     .limit(1);
-  return rows[0] ?? null;
+  return (await withArtifacts(databaseTx, rows))[0] ?? null;
 }
 
 function transactionAdapter(databaseTx: DatabaseTransaction) {
@@ -164,7 +218,11 @@ function transactionAdapter(databaseTx: DatabaseTransaction) {
       return rows[0] ? selectAdminById(databaseTx, rows[0].id) : null;
     },
 
-    async insertResource(input: { key: string; adminLabel: string }) {
+    async insertResource(input: {
+      key: string;
+      adminLabel: string;
+      kind: "document" | "software";
+    }) {
       const rows = await databaseTx
         .insert(downloadResources)
         .values(input)
@@ -182,6 +240,84 @@ function transactionAdapter(databaseTx: DatabaseTransaction) {
       const row = rows[0];
       if (!row) throw new Error("Download revision insert returned no row");
       return row;
+    },
+
+    async insertArtifact(input: ArtifactInsert) {
+      const rows = await databaseTx
+        .insert(downloadResourceArtifacts)
+        .values(input)
+        .returning();
+      const row = rows[0];
+      if (!row) throw new Error("Download artifact insert returned no row");
+      return row;
+    },
+
+    async cloneArtifacts(input: {
+      sourceRevisionId: string;
+      revisionId: string;
+      revisionKind: "document" | "software";
+    }) {
+      const source = await databaseTx
+        .select()
+        .from(downloadResourceArtifacts)
+        .where(
+          eq(downloadResourceArtifacts.revisionId, input.sourceRevisionId),
+        );
+      if (source.length === 0) return [];
+      return databaseTx
+        .insert(downloadResourceArtifacts)
+        .values(
+          source.map((artifact) => ({
+            slot: artifact.slot,
+            objectKey: artifact.objectKey,
+            originalFilename: artifact.originalFilename,
+            extension: artifact.extension,
+            mediaType: artifact.mediaType,
+            byteSize: artifact.byteSize,
+            sha256: artifact.sha256,
+            pageCount: artifact.pageCount,
+            coverObjectKey: artifact.coverObjectKey,
+            revisionId: input.revisionId,
+            revisionKind: input.revisionKind,
+          })),
+        )
+        .returning();
+    },
+
+    async replaceArtifact(input: ArtifactInsert) {
+      const replaced = await databaseTx
+        .delete(downloadResourceArtifacts)
+        .where(
+          and(
+            eq(downloadResourceArtifacts.revisionId, input.revisionId!),
+            eq(downloadResourceArtifacts.slot, input.slot!),
+          ),
+        )
+        .returning();
+      const inserted = await databaseTx
+        .insert(downloadResourceArtifacts)
+        .values(input)
+        .returning();
+      const artifact = inserted[0];
+      if (!artifact)
+        throw new Error("Download artifact insert returned no row");
+      return { artifact, replaced: replaced[0] ?? null };
+    },
+
+    async removeArtifact(input: {
+      revisionId: string;
+      slot: "document" | "windows" | "macos";
+    }) {
+      const rows = await databaseTx
+        .delete(downloadResourceArtifacts)
+        .where(
+          and(
+            eq(downloadResourceArtifacts.revisionId, input.revisionId),
+            eq(downloadResourceArtifacts.slot, input.slot),
+          ),
+        )
+        .returning();
+      return rows[0] ?? null;
     },
 
     async updateResourceCas(input: {
@@ -267,7 +403,7 @@ function transactionAdapter(databaseTx: DatabaseTransaction) {
     },
 
     async listCleanupPendingRevisions(resourceId: string) {
-      return databaseTx
+      const revisions = await databaseTx
         .select()
         .from(downloadResourceRevisions)
         .where(
@@ -280,6 +416,14 @@ function transactionAdapter(databaseTx: DatabaseTransaction) {
           asc(downloadResourceRevisions.createdAt),
           asc(downloadResourceRevisions.id),
         );
+      return publicWithArtifacts(databaseTx, revisions);
+    },
+
+    async deleteArtifactsForRevision(revisionId: string) {
+      return databaseTx
+        .delete(downloadResourceArtifacts)
+        .where(eq(downloadResourceArtifacts.revisionId, revisionId))
+        .returning();
     },
 
     async deleteDetachedRevision(revisionId: string) {
@@ -296,25 +440,24 @@ function transactionAdapter(databaseTx: DatabaseTransaction) {
     },
 
     async countArtifactReferences(input: {
-      pdfObjectKey: string;
-      coverObjectKey: string;
+      objectKey: string;
       excludeRevisionId?: string;
     }) {
       const exclusion = input.excludeRevisionId
-        ? sql`AND id <> ${input.excludeRevisionId}`
+        ? sql`AND revision_id <> ${input.excludeRevisionId}`
         : sql``;
       const result = await databaseTx.execute(sql`
         SELECT
-          count(*) FILTER (WHERE pdf_object_key = ${input.pdfObjectKey})::int AS pdf_reference_count,
-          count(*) FILTER (WHERE cover_object_key = ${input.coverObjectKey})::int AS cover_reference_count
-        FROM download_resource_revisions
+          count(*) FILTER (WHERE object_key = ${input.objectKey})::int AS object_reference_count,
+          count(*) FILTER (WHERE cover_object_key = ${input.objectKey})::int AS cover_reference_count
+        FROM download_resource_artifacts
         WHERE 1 = 1 ${exclusion}
       `);
       const row = result.rows[0] as
-        | { pdf_reference_count: number; cover_reference_count: number }
+        | { object_reference_count: number; cover_reference_count: number }
         | undefined;
       return {
-        pdfReferenceCount: row?.pdf_reference_count ?? 0,
+        objectReferenceCount: row?.object_reference_count ?? 0,
         coverReferenceCount: row?.cover_reference_count ?? 0,
       };
     },
@@ -425,7 +568,10 @@ export const downloadResourceRepository = {
           .leftJoin(publishedRevision, cleanPublishedJoin)
           .leftJoin(draftRevision, cleanDraftJoin)
           .where(where);
-        return { items: rows, total: totals[0]?.total ?? 0 };
+        return {
+          items: await withArtifacts(databaseTx, rows),
+          total: totals[0]?.total ?? 0,
+        };
       },
       { isolationLevel: "repeatable read" },
     );
@@ -449,14 +595,7 @@ export const downloadResourceRepository = {
       .where(
         and(
           eq(downloadResources.state, "published"),
-          eq(downloadResources.kind, "document"),
-          eq(publishedRevision.resourceKind, "document"),
-          isNotNull(publishedRevision.previewPolicy),
-          isNotNull(publishedRevision.pdfObjectKey),
-          isNotNull(publishedRevision.coverObjectKey),
-          isNotNull(publishedRevision.pageCount),
-          isNotNull(publishedRevision.byteSize),
-          isNotNull(publishedRevision.sha256),
+          eq(downloadResources.kind, publishedRevision.resourceKind),
         ),
       )
       .orderBy(
@@ -469,7 +608,9 @@ export const downloadResourceRepository = {
         asc(publishedRevision.sortOrder),
         asc(downloadResources.id),
       );
-    return documentPublicRows(rows);
+    return getDatabase().transaction((databaseTx) =>
+      publicWithArtifacts(databaseTx, rows),
+    );
   },
 
   async getPublicByKey(key: string) {
@@ -485,18 +626,14 @@ export const downloadResourceRepository = {
         and(
           eq(downloadResources.key, key),
           eq(downloadResources.state, "published"),
-          eq(downloadResources.kind, "document"),
-          eq(publishedRevision.resourceKind, "document"),
-          isNotNull(publishedRevision.previewPolicy),
-          isNotNull(publishedRevision.pdfObjectKey),
-          isNotNull(publishedRevision.coverObjectKey),
-          isNotNull(publishedRevision.pageCount),
-          isNotNull(publishedRevision.byteSize),
-          isNotNull(publishedRevision.sha256),
+          eq(downloadResources.kind, publishedRevision.resourceKind),
         ),
       )
       .limit(1);
-    return documentPublicRow(rows[0]);
+    return getDatabase().transaction(async (databaseTx) => {
+      const withLoadedArtifacts = await publicWithArtifacts(databaseTx, rows);
+      return withLoadedArtifacts[0] ?? null;
+    });
   },
 
   async transaction<Result>(

@@ -65,9 +65,7 @@ export const downloadResourceRevisions = pgTable(
       .references((): AnyPgColumn => downloadResources.id, {
         onDelete: "restrict",
       }),
-    resourceKind: downloadResourceKind("resource_kind")
-      .default("document")
-      .notNull(),
+    resourceKind: downloadResourceKind("resource_kind").notNull(),
     name: varchar("name", { length: 240 }).notNull(),
     product: varchar("product", { length: 80 }).notNull(),
     category: downloadResourceCategory("category").notNull(),
@@ -77,11 +75,6 @@ export const downloadResourceRevisions = pgTable(
     previewPolicy: downloadResourceAccess("preview_policy"),
     downloadPolicy: downloadResourceAccess("download_policy").notNull(),
     releaseVersion: varchar("release_version", { length: 40 }),
-    pdfObjectKey: varchar("pdf_object_key", { length: 512 }),
-    coverObjectKey: varchar("cover_object_key", { length: 512 }),
-    pageCount: integer("page_count"),
-    byteSize: integer("byte_size"),
-    sha256: varchar("sha256", { length: 64 }),
     createdBy: uuid("created_by").references(() => users.id, {
       onDelete: "restrict",
     }),
@@ -112,22 +105,6 @@ export const downloadResourceRevisions = pgTable(
     ),
     index("download_resource_revisions_cleanup_pending_idx").on(
       table.cleanupPendingAt,
-    ),
-    check(
-      "download_resource_revisions_artifacts_complete_check",
-      sql`(${table.pdfObjectKey} IS NULL AND ${table.coverObjectKey} IS NULL AND ${table.pageCount} IS NULL AND ${table.byteSize} IS NULL AND ${table.sha256} IS NULL) OR (${table.pdfObjectKey} IS NOT NULL AND ${table.coverObjectKey} IS NOT NULL AND ${table.pageCount} IS NOT NULL AND ${table.byteSize} IS NOT NULL AND ${table.sha256} IS NOT NULL)`,
-    ),
-    check(
-      "download_resource_revisions_page_count_positive_check",
-      sql`${table.pageCount} IS NULL OR ${table.pageCount} > 0`,
-    ),
-    check(
-      "download_resource_revisions_byte_size_positive_check",
-      sql`${table.byteSize} IS NULL OR ${table.byteSize} > 0`,
-    ),
-    check(
-      "download_resource_revisions_sha256_check",
-      sql`${table.sha256} IS NULL OR ${table.sha256} ~ '^[0-9a-f]{64}$'`,
     ),
     check(
       "download_resource_revisions_access_check",
@@ -228,7 +205,7 @@ export const downloadResources = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     key: varchar("key", { length: 120 }).notNull(),
     adminLabel: varchar("admin_label", { length: 240 }).notNull(),
-    kind: downloadResourceKind("kind").default("document").notNull(),
+    kind: downloadResourceKind("kind").notNull(),
     state: downloadResourceState("state").default("unpublished").notNull(),
     publishedRevisionId: uuid("published_revision_id"),
     draftRevisionId: uuid("draft_revision_id"),

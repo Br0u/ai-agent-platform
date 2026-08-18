@@ -47,7 +47,7 @@ describe("download resource schema", () => {
     );
   });
 
-  it("stores only the required resource and revision fields", () => {
+  it("stores the final artifact-only revision shape", () => {
     expect(
       getTableConfig(downloadResources).columns.map((column) => column.name),
     ).toEqual([
@@ -79,11 +79,6 @@ describe("download resource schema", () => {
       "preview_policy",
       "download_policy",
       "release_version",
-      "pdf_object_key",
-      "cover_object_key",
-      "page_count",
-      "byte_size",
-      "sha256",
       "created_by",
       "created_at",
       "published_at",
@@ -111,7 +106,7 @@ describe("download resource schema", () => {
     ]);
   });
 
-  it("names the database checks that enforce state, artifact, and policy rules", () => {
+  it("names the final database checks without legacy PDF-column checks", () => {
     expect(
       getTableConfig(downloadResources).checks.map((check) => check.name),
     ).toEqual(
@@ -126,10 +121,6 @@ describe("download resource schema", () => {
       ),
     ).toEqual(
       expect.arrayContaining([
-        "download_resource_revisions_artifacts_complete_check",
-        "download_resource_revisions_page_count_positive_check",
-        "download_resource_revisions_byte_size_positive_check",
-        "download_resource_revisions_sha256_check",
         "download_resource_revisions_access_check",
         "download_resource_revisions_kind_policy_check",
       ]),
@@ -231,7 +222,7 @@ describe("download resource schema", () => {
     });
   });
 
-  it("keeps the transitional defaults and immutable kind trigger in the migration", () => {
+  it("removes transitional defaults and legacy PDF columns in the contract migration", () => {
     const migration = readFileSync(
       new URL(
         "../../drizzle/0012_download_resource_artifacts.sql",
@@ -239,12 +230,24 @@ describe("download resource schema", () => {
       ),
       "utf8",
     );
-    expect(migration).toContain(
-      'ADD COLUMN "kind" "download_resource_kind" DEFAULT \'document\' NOT NULL',
+    const contraction = readFileSync(
+      new URL(
+        "../../drizzle/0013_remove_download_pdf_columns.sql",
+        import.meta.url,
+      ),
+      "utf8",
     );
-    expect(migration).toContain(
-      'ADD COLUMN "resource_kind" "download_resource_kind" DEFAULT \'document\' NOT NULL',
-    );
+    expect(contraction).toContain('ALTER COLUMN "kind" DROP DEFAULT');
+    expect(contraction).toContain('ALTER COLUMN "resource_kind" DROP DEFAULT');
+    for (const column of [
+      "pdf_object_key",
+      "cover_object_key",
+      "page_count",
+      "byte_size",
+      "sha256",
+    ]) {
+      expect(contraction).toContain(`DROP COLUMN "${column}"`);
+    }
     expect(migration).toContain(
       'CREATE TRIGGER "download_resources_kind_immutable_guard"',
     );

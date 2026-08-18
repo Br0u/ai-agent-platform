@@ -33,11 +33,7 @@ vi.mock("drizzle-orm/node-postgres", async (importOriginal) => {
   };
 });
 
-import {
-  documentPublicRow,
-  documentPublicRows,
-  downloadResourceRepository,
-} from "./repository";
+import { downloadResourceRepository } from "./repository";
 
 const source = readFileSync(
   resolve(process.cwd(), "src/server/downloads/repository.ts"),
@@ -214,13 +210,16 @@ describe("download resource repository contract", () => {
     expect(mocks.events.slice(-2)).toEqual(["unlock", "release"]);
   });
 
-  it("keeps projections, locking, CAS, cleanup and per-key reference counts in SQL", () => {
+  it("keeps artifact projections, locking, CAS, cleanup and per-key reference counts in SQL", () => {
     expect(source).toContain('.for("update")');
     expect(source).toContain("downloadResources.rowVersion");
     expect(source).toContain("cleanupPendingAt");
-    expect(source).toContain("pdfReferenceCount");
+    expect(source).toContain("downloadResourceArtifacts");
+    expect(source).toContain("objectReferenceCount");
     expect(source).toContain("coverReferenceCount");
     expect(source).toContain("listCleanupPendingRevisions");
+    expect(source).toContain("cloneArtifacts");
+    expect(source).toContain("replaceArtifact");
     expect(source).toContain("deleteDetachedRevision");
     expect(source).toContain(
       "createAuditWriter(createDatabaseAuditRepository(databaseTx))",
@@ -235,50 +234,6 @@ describe("download resource repository contract", () => {
     expect(source).toMatch(
       /CASE[\s\S]*materials[\s\S]*software[\s\S]*deployment[\s\S]*whitepapers/u,
     );
-  });
-
-  it("maps only document revisions with a preview policy into the legacy public list", () => {
-    const document = {
-      resourceKind: "document" as const,
-      previewPolicy: "public" as const,
-      id: "document",
-    };
-    const software = {
-      resourceKind: "software" as const,
-      previewPolicy: null,
-      id: "software",
-    };
-    const noPreview = {
-      resourceKind: "document" as const,
-      previewPolicy: null,
-      id: "no-preview",
-    };
-
-    expect(documentPublicRows([document, software, noPreview])).toEqual([
-      document,
-    ]);
-  });
-
-  it("rejects software and null-policy revisions from the legacy public lookup", () => {
-    const document = {
-      resourceKind: "document" as const,
-      previewPolicy: "public" as const,
-      id: "document",
-    };
-    const software = {
-      resourceKind: "software" as const,
-      previewPolicy: null,
-      id: "software",
-    };
-    const noPreview = {
-      resourceKind: "document" as const,
-      previewPolicy: null,
-      id: "no-preview",
-    };
-
-    expect(documentPublicRow(document)).toBe(document);
-    expect(documentPublicRow(software)).toBeNull();
-    expect(documentPublicRow(noPreview)).toBeNull();
   });
 
   it("locks the complete active-workforce admin:downloads permission chain", () => {
