@@ -14,7 +14,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createDownloadFileStore } from "./file-store";
+import {
+  createDownloadFileStore,
+  type DownloadStageExtension,
+} from "./file-store";
 
 const resourceId = "00000000-0000-4000-8000-000000000001";
 const revisionId = "0191f2a3-4567-7abc-8def-0123456789ab";
@@ -38,7 +41,7 @@ async function temporaryRoot() {
 
 async function writeStage(
   store: ReturnType<typeof createDownloadFileStore>,
-  extension: ".pdf" | ".webp",
+  extension: DownloadStageExtension,
   contents: string,
 ) {
   const stage = await store.createStage(extension);
@@ -150,6 +153,81 @@ describe("download artifact file store", () => {
       code: "ENOENT",
     });
     await expect(store.remove(objectKey)).resolves.toBeUndefined();
+  });
+
+  it("accepts only recognized artifact extensions and commits slot-specific keys", async () => {
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+
+    await expect(store.createStage(".txt" as ".pdf")).rejects.toThrow(
+      "Invalid stage extension",
+    );
+
+    const document = await writeStage(store, ".pdf", "document");
+    await expect(
+      store.commitArtifact(document, {
+        resourceId,
+        revisionId,
+        slot: "document",
+        extension: ".pdf",
+      }),
+    ).resolves.toBe(`objects/${resourceId}/${revisionId}.pdf`);
+
+    const cover = await writeStage(store, ".webp", "cover");
+    await expect(
+      store.commitArtifact(cover, {
+        resourceId,
+        revisionId,
+        slot: "document",
+        extension: ".webp",
+      }),
+    ).resolves.toBe(`objects/${resourceId}/${revisionId}.webp`);
+
+    const windows = await writeStage(store, ".msi", "windows");
+    await expect(
+      store.commitArtifact(windows, {
+        resourceId,
+        revisionId,
+        slot: "windows",
+        extension: ".msi",
+      }),
+    ).resolves.toBe(`objects/${resourceId}/${revisionId}-windows.msi`);
+
+    const macos = await writeStage(store, ".dmg", "macos");
+    await expect(
+      store.commitArtifact(macos, {
+        resourceId,
+        revisionId,
+        slot: "macos",
+        extension: ".dmg",
+      }),
+    ).resolves.toBe(`objects/${resourceId}/${revisionId}-macos.dmg`);
+  });
+
+  it("rejects slot-extension mismatches and exact byte-size inspection failures", async () => {
+    const store = createDownloadFileStore(await temporaryRoot());
+    const mismatch = await writeStage(store, ".exe", "windows");
+
+    await expect(
+      store.commitArtifact(mismatch, {
+        resourceId,
+        revisionId,
+        slot: "macos",
+        extension: ".exe",
+      }),
+    ).rejects.toThrow("Stage extension does not match artifact slot");
+
+    const stage = await writeStage(store, ".zip", "12345");
+    const key = await store.commitArtifact(stage, {
+      resourceId,
+      revisionId,
+      slot: "windows",
+      extension: ".zip",
+    });
+    await expect(store.inspect(key, 5)).resolves.toMatchObject({ size: 5 });
+    await expect(store.inspect(key, 4)).rejects.toThrow(
+      "Artifact byte size mismatch",
+    );
   });
 
   it("commits with no-clobber semantics and preserves the original bytes", async () => {
