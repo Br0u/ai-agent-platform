@@ -99,6 +99,18 @@ function uploadErrorMessage(response: Response, code: unknown) {
   return "上传未完成，请稍后重试。";
 }
 
+function restoreActionFocus(triggerId: string, resourceButtonId: string) {
+  requestAnimationFrame(() => {
+    const trigger = document.getElementById(triggerId);
+    const fallback = document.getElementById(resourceButtonId);
+    const target =
+      trigger instanceof HTMLButtonElement && !trigger.disabled
+        ? trigger
+        : fallback;
+    target?.focus();
+  });
+}
+
 function ActionForm({
   action,
   disabled,
@@ -118,9 +130,9 @@ function ActionForm({
 }) {
   const [state, formAction, pending] = useActionState(action, idle);
   const [open, setOpen] = useState(false);
-  const trigger = useRef<HTMLButtonElement>(null);
   const confirm = useRef<HTMLButtonElement>(null);
   const triggerId = `download-action-${resource.id}-${slot ?? label}`;
+  const resourceButtonId = `download-resource-${resource.id}`;
   const consequence =
     label === "发布资源"
       ? "发布后资源将对外可用。"
@@ -129,14 +141,12 @@ function ActionForm({
         : label === "丢弃草稿"
           ? "草稿修改将被永久丢弃。"
           : "草稿文件将被永久移除。";
-  const restoreFocus = () =>
-    requestAnimationFrame(() => document.getElementById(triggerId)?.focus());
   useEffect(() => {
     if (state.kind === "success") {
       onResource(state.resource);
-      requestAnimationFrame(() => document.getElementById(triggerId)?.focus());
+      restoreActionFocus(triggerId, resourceButtonId);
     }
-  }, [state, onResource, triggerId]);
+  }, [state, onResource, triggerId, resourceButtonId]);
   return (
     <>
       <button
@@ -144,7 +154,6 @@ function ActionForm({
         disabled={disabled || pending}
         id={triggerId}
         onClick={() => setOpen(true)}
-        ref={trigger}
         type="button"
       >
         {pending ? "正在处理…" : label}
@@ -162,7 +171,7 @@ function ActionForm({
           labelledBy="download-confirm-heading"
           onClose={() => {
             setOpen(false);
-            restoreFocus();
+            restoreActionFocus(triggerId, resourceButtonId);
           }}
         >
           <section className="download-resource-manager__dialog">
@@ -184,7 +193,7 @@ function ActionForm({
                 disabled={pending}
                 onClick={() => {
                   setOpen(false);
-                  restoreFocus();
+                  restoreActionFocus(triggerId, resourceButtonId);
                 }}
                 type="button"
               >
@@ -1038,6 +1047,7 @@ export function DownloadResourceManager({
                           resource.id === selectedId ? "page" : undefined
                         }
                         disabled={controlsLocked}
+                        id={`download-resource-${resource.id}`}
                         onClick={() => setSelectedId(resource.id)}
                         type="button"
                       >

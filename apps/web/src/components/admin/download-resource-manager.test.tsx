@@ -198,16 +198,62 @@ describe("DownloadResourceManager", () => {
   });
 
   it("confirms lifecycle mutations, supports cancel and Escape, and restores trigger focus", async () => {
+    actions.publish.mockResolvedValueOnce({
+      kind: "success",
+      resource: {
+        ...software,
+        rowVersion: 3,
+        state: "published",
+        adminStatus: "已发布",
+        publishedRevision: {
+          ...software.draftRevision!,
+          publishedAt: "2026-08-18T01:00:00.000Z",
+        },
+        draftRevision: null,
+      },
+    });
     render(<DownloadResourceManager resources={[software]} />);
     const trigger = screen.getByRole("button", { name: "发布资源" });
     fireEvent.click(trigger);
     expect(screen.getByRole("dialog")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(trigger).toHaveFocus());
     fireEvent.click(trigger);
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() => expect(trigger).toHaveFocus());
     fireEvent.click(trigger);
     fireEvent.click(screen.getByRole("button", { name: "确认" }));
     await waitFor(() => expect(actions.publish).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        document.getElementById(`download-resource-${software.id}`),
+      ).toHaveFocus(),
+    );
+    expect(screen.getByRole("button", { name: "发布资源" })).toBeDisabled();
+  });
+
+  it("falls back to the selected resource when a successful action removes its trigger", async () => {
+    actions.remove.mockResolvedValueOnce({
+      kind: "success",
+      resource: {
+        ...documentResource,
+        rowVersion: 3,
+        draftRevision: {
+          ...documentResource.draftRevision!,
+          artifacts: [],
+        },
+      },
+    });
+    render(<DownloadResourceManager resources={[documentResource]} />);
+    fireEvent.click(screen.getByRole("button", { name: "移除草稿文件" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认" }));
+    await waitFor(() => expect(actions.remove).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        document.getElementById(`download-resource-${documentResource.id}`),
+      ).toHaveFocus(),
+    );
+    expect(screen.queryByRole("button", { name: "移除草稿文件" })).toBeNull();
   });
 
   it("keeps failed confirmations open and exposes document and software draft field errors", async () => {
@@ -219,10 +265,11 @@ describe("DownloadResourceManager", () => {
     render(<DownloadResourceManager resources={[software]} />);
     fireEvent.click(screen.getByRole("button", { name: "发布资源" }));
     fireEvent.click(screen.getByRole("button", { name: "确认" }));
-    await waitFor(() => expect(screen.getByRole("dialog")).toBeVisible());
-    expect(
-      screen.getByRole("dialog").querySelector('[role="status"]'),
-    ).toHaveTextContent("当前资源状态不允许此操作。");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("dialog").querySelector('[role="status"]'),
+      ).toHaveTextContent("当前资源状态不允许此操作。"),
+    );
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
     await waitFor(() => expect(screen.getByText("无效版本")).toBeVisible());
