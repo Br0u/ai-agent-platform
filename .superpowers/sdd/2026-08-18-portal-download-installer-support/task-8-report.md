@@ -64,3 +64,5 @@
 - Removed synchronous effect state updates that violated `react-hooks/set-state-in-effect`; New focus is restored only by its close handler.
 - Confirmation now closes from the returned success DTO state and keeps failed state mounted.
 - Exact lint evidence: `pnpm --filter @ai-agent-platform/web lint` exited 0 with `$ eslint . --max-warnings=0`.
+- Completion evidence: direct single-worker focused Vitest run passed **7 files / 81 tests**; `typecheck`, exact `lint`, `format:check`, and `git diff --check fb237801..HEAD` all exited 0.
+- Commits: `1342672b9de19c6edd2c2cd79d468895694b8f81` and `ee1b0270df91aeab2363f45fa31967c88e7e9a33`.
