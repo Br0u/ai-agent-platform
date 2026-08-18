@@ -59,7 +59,7 @@ describe("artifact file recognition", () => {
     [
       "macOS PKG",
       "macos",
-      "mario.pkg",
+      "mario.PKG",
       Buffer.from("xar!"),
       ".pkg",
       "application/vnd.apple.installer+xml",
@@ -123,6 +123,13 @@ describe("artifact file recognition", () => {
       "windows",
       "fake.exe",
       Buffer.from("not an executable"),
+      Buffer.alloc(512),
+    ],
+    [
+      "a Unicode case-folded extension",
+      "macos",
+      "mario.pKg",
+      Buffer.from("xar!"),
       Buffer.alloc(512),
     ],
     [

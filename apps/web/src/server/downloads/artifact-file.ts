@@ -91,7 +91,7 @@ export function detectArtifact({
   suffix,
 }: DetectArtifactInput) {
   const cleanFilename = sanitizeArtifactFilename(filename);
-  const extension = /\.[a-z0-9]+$/iu.exec(cleanFilename)?.[0]?.toLowerCase();
+  const extension = /\.[A-Za-z0-9]+$/u.exec(cleanFilename)?.[0]?.toLowerCase();
   if (!extension) return invalidArtifact();
 
   const type = ARTIFACT_FILE_TYPES[slot]?.[extension];
