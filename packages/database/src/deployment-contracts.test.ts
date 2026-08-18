@@ -1138,14 +1138,14 @@ describe("production deployment security contracts", () => {
     );
   });
 
-  it("separates direct Web development from local Compose and gives agents safe instructions", () => {
+  it("separates local development from full Compose and gives agents safe instructions", () => {
     const rootReadme = read("README.md");
     const environmentMigration = read(
       "docs/deployment/maduoduo-environment-migration.md",
     );
     const example = read(".env.example");
 
-    expect(rootReadme).toContain("## 本地开发（直接运行 Web，端口 3000）");
+    expect(rootReadme).toContain("## 本地开发（端口 3000）");
     expect(rootReadme).toContain(
       "## 本地 Docker Compose（完整环境，端口 8080）",
     );
