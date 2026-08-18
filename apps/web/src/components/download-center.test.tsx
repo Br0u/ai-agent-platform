@@ -101,6 +101,18 @@ const desktopClient: SoftwareResource = {
   updatedAt: "2026-08-18T00:00:00.000Z",
 };
 
+const dualPlatformDesktopClient: SoftwareResource = {
+  ...desktopClient,
+  platforms: {
+    windows: desktopClient.platforms.windows,
+    macos: {
+      filename: "mario.dmg",
+      byteSize: 180_000_000,
+      downloadUrl: "/api/v1/downloads/mdd2-client/download/macos",
+    },
+  },
+};
+
 const twentyResources = Array.from({ length: 20 }, (_, index) => ({
   ...resources[index % resources.length]!,
   key: `published-resource-${index + 1}`,
@@ -246,6 +258,37 @@ describe("managed download center", () => {
     expect(
       within(client).queryByRole("link", { name: "下载 macOS 安装包" }),
     ).toBeNull();
+  });
+
+  it("fills the existing desktop right column with installation and platform content", () => {
+    render(<DownloadCenter resources={[desktopClient]} />);
+
+    const client = card("码里奥桌面客户端");
+    const rightColumn = client.querySelector<HTMLElement>(
+      ":scope > .download-card__cover",
+    );
+    expect(rightColumn).not.toBeNull();
+    expect(
+      within(rightColumn!).getByText("下载安装包 → 安装部署 → 进入使用"),
+    ).toBeVisible();
+    expect(
+      within(rightColumn!).getByRole("link", { name: "下载 Windows 安装包" }),
+    ).toBeVisible();
+  });
+
+  it("shows both installer filenames, sizes, and direct public slot downloads", () => {
+    render(<DownloadCenter resources={[dualPlatformDesktopClient]} />);
+
+    const client = card("码里奥桌面客户端");
+    expect(client).toHaveTextContent("mario.exe · 228.9 MB");
+    expect(client).toHaveTextContent("mario.dmg · 171.7 MB");
+    expect(within(client).queryByText("暂无资源")).toBeNull();
+    expect(
+      within(client).getByRole("link", { name: "下载 Windows 安装包" }),
+    ).toHaveAttribute("href", "/api/v1/downloads/mdd2-client/download/windows");
+    expect(
+      within(client).getByRole("link", { name: "下载 macOS 安装包" }),
+    ).toHaveAttribute("href", "/api/v1/downloads/mdd2-client/download/macos");
   });
 
   it("keeps either desktop platform independently downloadable", () => {
