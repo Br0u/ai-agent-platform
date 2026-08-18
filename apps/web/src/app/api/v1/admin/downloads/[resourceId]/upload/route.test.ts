@@ -189,6 +189,14 @@ describe("admin download upload", () => {
       new Error("DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT"),
     );
     expect((await POST(request('"2"'), params)).status).toBe(409);
+    wiring.attach.mockRejectedValueOnce(
+      Object.assign(new Error("disk full"), { code: "ENOSPC" }),
+    );
+    const storage = await POST(request('"2"'), params);
+    expect(storage.status).toBe(507);
+    await expect(storage.json()).resolves.toMatchObject({
+      error: { code: "insufficient_storage" },
+    });
   });
 
   it("maps typed PDF failures without parsing messages", async () => {

@@ -18,6 +18,7 @@ import {
   downloadResourceFileStore,
   downloadResourceService,
 } from "@/server/downloads/service";
+import { artifactUploadErrorCode } from "@/server/downloads/artifact-upload";
 
 export const runtime = "nodejs";
 
@@ -97,6 +98,8 @@ function statusFor(error: unknown, request: Request) {
       error.code === "invalid_multipart" ? 400 : 413,
       error.code,
     ] as const;
+  if (artifactUploadErrorCode(error) === "insufficient_storage")
+    return [507, "insufficient_storage"] as const;
   if (error instanceof AggregateError) return [500, "internal_error"] as const;
   if (getPdfToolErrorCode(error) === "invalid_pdf")
     return [422, "invalid_pdf"] as const;

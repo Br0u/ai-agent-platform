@@ -441,10 +441,10 @@ function transactionAdapter(databaseTx: DatabaseTransaction) {
 
     async countArtifactReferences(input: {
       objectKey: string;
-      excludeRevisionId?: string;
+      excludeRevisionIds?: string[];
     }) {
-      const exclusion = input.excludeRevisionId
-        ? sql`AND revision_id <> ${input.excludeRevisionId}`
+      const exclusion = input.excludeRevisionIds?.length
+        ? sql`AND revision_id <> ALL(${input.excludeRevisionIds}::uuid[])`
         : sql``;
       const result = await databaseTx.execute(sql`
         SELECT

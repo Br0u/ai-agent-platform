@@ -28,6 +28,7 @@ vi.mock("./repository", () => ({
 }));
 
 import { downloadResourceService } from "./service";
+import { downloadResourceRepository } from "./repository";
 
 const source = readFileSync(
   resolve(process.cwd(), "src/server/downloads/service.ts"),
@@ -60,6 +61,44 @@ describe("typed download artifact lifecycle", () => {
     expect(downloadResourceService).toHaveProperty("removeDraftArtifact");
     expect(downloadResourceService).toHaveProperty("attachUploadedPdf");
     expect(downloadResourceService).toHaveProperty("removeDraftFile");
+  });
+
+  it("writes the exact create audit metadata including revisionId null", async () => {
+    const audits: unknown[] = [];
+    vi.mocked(downloadResourceRepository.transaction).mockImplementationOnce(
+      async (work) =>
+        work({
+          assertActiveWorkforcePermission: vi.fn(),
+          insertResource: vi.fn(async () => ({
+            id: "11111111-1111-4111-8111-111111111111",
+            key: "typed-resource",
+            adminLabel: "Typed resource",
+            kind: "document",
+            state: "unpublished",
+            publishedRevisionId: null,
+            draftRevisionId: null,
+            rowVersion: 1,
+            createdAt: new Date("2026-08-18T00:00:00.000Z"),
+            updatedAt: new Date("2026-08-18T00:00:00.000Z"),
+          })),
+          appendAudit: vi.fn(async (value) => audits.push(value)),
+        } as never),
+    );
+    await downloadResourceService.createResource({
+      key: "typed-resource",
+      adminLabel: "Typed resource",
+    });
+    expect(audits).toEqual([
+      expect.objectContaining({
+        event: "download_resource.created",
+        metadata: {
+          key: "typed-resource",
+          rowVersion: 1,
+          revisionId: null,
+          result: "success",
+        },
+      }),
+    ]);
   });
 
   it("keeps public resources discriminated and hides empty software", () => {

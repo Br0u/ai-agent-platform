@@ -3,7 +3,12 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-import type { AuditWriteInput } from "../auth/audit";
+import type {
+  AuditWriteInput,
+  DownloadResourceAuditMetadata,
+  DownloadResourceCleanupFailedAuditMetadata,
+  DownloadResourceCreatedAuditMetadata,
+} from "../auth/audit";
 import { requirePermission, type WorkforceActor } from "../auth/access";
 import {
   adminDownloadQuerySchema,
@@ -179,6 +184,12 @@ function assertCurrent(
   if (resource.rowVersion !== input.expectedRowVersion)
     throw new Error("DOWNLOAD_RESOURCE_ROW_VERSION_CONFLICT");
 }
+function throwIfAborted(signal: AbortSignal | undefined) {
+  if (!signal?.aborted) return;
+  const error = new Error("Download upload aborted");
+  error.name = "AbortError";
+  throw error;
+}
 
 function revisionDto(revision: Revision) {
   const base = {
@@ -339,29 +350,75 @@ async function update(
     draftRevision,
   } as Resource;
 }
-function audit(
-  event: Extract<
-    AuditWriteInput,
-    { event: `download_resource.${string}` }
-  >["event"],
+function auditEnvelope(
   actor: WorkforceActor,
   resource: Resource,
-  revisionId: string | null,
   context: Context,
-): AuditWriteInput {
+): Pick<AuditWriteInput, "actor" | "target" | "ipAddress" | "userAgent"> {
   return {
-    event,
     actor: { realm: "workforce", userId: actor.userId },
     target: { type: "download_resource", id: resource.id },
-    metadata: {
-      key: resource.key,
-      rowVersion: resource.rowVersion,
-      result: "success",
-      ...(revisionId ? { revisionId } : {}),
-    },
     ...(context.ipAddress ? { ipAddress: context.ipAddress } : {}),
     ...(context.userAgent ? { userAgent: context.userAgent } : {}),
-  } as AuditWriteInput;
+  };
+}
+function createdAudit(
+  actor: WorkforceActor,
+  resource: Resource,
+  context: Context,
+): Extract<AuditWriteInput, { event: "download_resource.created" }> {
+  const metadata: DownloadResourceCreatedAuditMetadata = {
+    key: resource.key,
+    rowVersion: resource.rowVersion,
+    revisionId: null,
+    result: "success",
+  };
+  return {
+    event: "download_resource.created",
+    ...auditEnvelope(actor, resource, context),
+    metadata,
+  };
+}
+type RevisionAuditEvent =
+  | "download_resource.draft_saved"
+  | "download_resource.uploaded"
+  | "download_resource.published"
+  | "download_resource.downlined"
+  | "download_resource.draft_discarded"
+  | "download_resource.file_removed";
+function revisionAudit(
+  event: RevisionAuditEvent,
+  actor: WorkforceActor,
+  resource: Resource,
+  revisionId: string,
+  context: Context,
+): Extract<AuditWriteInput, { event: RevisionAuditEvent }> {
+  const metadata: DownloadResourceAuditMetadata = {
+    key: resource.key,
+    rowVersion: resource.rowVersion,
+    revisionId,
+    result: "success",
+  };
+  return { event, ...auditEnvelope(actor, resource, context), metadata };
+}
+function cleanupFailureAudit(
+  actor: WorkforceActor,
+  resource: Resource,
+  revision: Revision,
+  context: Context,
+): Extract<AuditWriteInput, { event: "download_resource.cleanup_failed" }> {
+  const metadata: DownloadResourceCleanupFailedAuditMetadata = {
+    key: resource.key,
+    rowVersion: resource.rowVersion,
+    revisionId: revision.id,
+    result: "failure",
+    errorCategory: "filesystem",
+  };
+  return {
+    event: "download_resource.cleanup_failed",
+    ...auditEnvelope(actor, resource, context),
+    metadata,
+  };
 }
 async function cleanup(
   tx: Transaction,
@@ -378,6 +435,7 @@ async function cleanupObjects(
   context: Context,
 ) {
   if (revisions.length === 0) return;
+  const excludedRevisionIds = revisions.map((revision) => revision.id);
   try {
     for (const objectKey of new Set(
       revisions.flatMap((revision) =>
@@ -387,22 +445,13 @@ async function cleanupObjects(
         ]),
       ),
     )) {
-      const counts = await Promise.all(
-        revisions.map((revision) =>
-          downloadResourceRepository.transaction((tx) =>
-            tx.countArtifactReferences({
-              objectKey,
-              excludeRevisionId: revision.id,
-            }),
-          ),
-        ),
+      const counts = await downloadResourceRepository.transaction((tx) =>
+        tx.countArtifactReferences({
+          objectKey,
+          excludeRevisionIds: excludedRevisionIds,
+        }),
       );
-      if (
-        counts.every(
-          (count) =>
-            count.objectReferenceCount + count.coverReferenceCount === 0,
-        )
-      )
+      if (counts.objectReferenceCount + counts.coverReferenceCount === 0)
         await downloadResourceFileStore.remove(objectKey);
     }
     await downloadResourceRepository.transaction(async (tx) => {
@@ -413,23 +462,12 @@ async function cleanupObjects(
     });
   } catch {
     await downloadResourceRepository.transaction(async (tx) => {
-      for (const revision of revisions)
+      for (const revision of revisions) {
         await tx.setCleanupError(revision.id, "filesystem cleanup failed");
-      await tx.appendAudit({
-        ...audit(
-          "download_resource.cleanup_failed",
-          actor,
-          resource,
-          null,
-          context,
-        ),
-        metadata: {
-          key: resource.key,
-          rowVersion: resource.rowVersion,
-          result: "failure",
-          errorCategory: "filesystem",
-        },
-      } as AuditWriteInput);
+        await tx.appendAudit(
+          cleanupFailureAudit(actor, resource, revision, context),
+        );
+      }
     });
   }
 }
@@ -476,9 +514,7 @@ export const downloadResourceService = {
         publishedRevision: null,
         draftRevision: null,
       } as Resource;
-      await tx.appendAudit(
-        audit("download_resource.created", actor, resource, null, context),
-      );
+      await tx.appendAudit(createdAudit(actor, resource, context));
       return adminDto(resource);
     });
   },
@@ -493,9 +529,7 @@ export const downloadResourceService = {
         publishedRevision: null,
         draftRevision: null,
       } as Resource;
-      await tx.appendAudit(
-        audit("download_resource.created", actor, resource, null, context),
-      );
+      await tx.appendAudit(createdAudit(actor, resource, context));
       return typedAdminDto(resource);
     });
   },
@@ -541,7 +575,7 @@ export const downloadResourceService = {
         );
         const pending = await cleanup(tx, current.id, previousDraft);
         await tx.appendAudit(
-          audit(
+          revisionAudit(
             "download_resource.draft_saved",
             actor,
             resource,
@@ -555,12 +589,18 @@ export const downloadResourceService = {
         cleanupObjects(pending, actor, resource, context),
     );
   },
-  async attachUploadedArtifact(rawInput: unknown, context: Context = {}) {
+  async attachUploadedArtifact(
+    rawInput: unknown,
+    context: Context = {},
+    signal?: AbortSignal,
+  ) {
     const actor = await authenticated();
     const input = parse(uploadArtifactInputSchema, rawInput);
     const revisionId = randomUUID();
     const committed: string[] = [];
+    let businessCommitted = false;
     try {
+      throwIfAborted(signal);
       const objectKey = await downloadResourceFileStore.commitArtifact(
         input.stage as DownloadStage,
         {
@@ -571,6 +611,7 @@ export const downloadResourceService = {
         },
       );
       committed.push(objectKey);
+      throwIfAborted(signal);
       let coverObjectKey: string | null = null;
       if (input.slot === "document") {
         if (
@@ -589,9 +630,11 @@ export const downloadResourceService = {
           },
         );
         committed.push(coverObjectKey);
+        throwIfAborted(signal);
       }
       return await downloadResourceRepository.withArtifactMutationLock(
         async (tx) => {
+          throwIfAborted(signal);
           await tx.assertActiveWorkforcePermission(
             actor.userId,
             "admin:downloads",
@@ -641,6 +684,7 @@ export const downloadResourceService = {
               input.slot === "document" ? (input.pageCount ?? null) : null,
             coverObjectKey,
           });
+          throwIfAborted(signal);
           const draft = {
             ...inserted,
             artifacts: [
@@ -658,7 +702,7 @@ export const downloadResourceService = {
           );
           const pending = await cleanup(tx, current.id, previousDraft);
           await tx.appendAudit(
-            audit(
+            revisionAudit(
               "download_resource.uploaded",
               actor,
               resource,
@@ -668,10 +712,13 @@ export const downloadResourceService = {
           );
           return { dto: await typedAdminDto(resource), resource, pending };
         },
-        async ({ resource, pending }) =>
-          cleanupObjects(pending, actor, resource, context),
+        async ({ resource, pending }) => {
+          businessCommitted = true;
+          await cleanupObjects(pending, actor, resource, context);
+        },
       );
     } catch (error) {
+      if (businessCommitted) throw error;
       await Promise.all(
         committed.map((key) =>
           downloadResourceFileStore.remove(key).catch(() => undefined),
@@ -683,9 +730,8 @@ export const downloadResourceService = {
   async attachUploadedPdf(
     rawInput: unknown,
     context: Context = {},
-    _signal?: AbortSignal,
+    signal?: AbortSignal,
   ) {
-    void _signal;
     const input = parse(attachUploadedPdfInputSchema, rawInput);
     return this.attachUploadedArtifact(
       {
@@ -698,6 +744,7 @@ export const downloadResourceService = {
         mediaType: "application/pdf",
       },
       context,
+      signal,
     ).then(({ resource }) => adminDto(resource));
   },
   async publishTyped(rawInput: unknown, context: Context = {}) {
@@ -734,7 +781,7 @@ export const downloadResourceService = {
           current.publishedRevision,
         );
         await tx.appendAudit(
-          audit(
+          revisionAudit(
             "download_resource.published",
             actor,
             resource,
@@ -780,7 +827,7 @@ export const downloadResourceService = {
             current.publishedRevision,
           );
           await tx.appendAudit(
-            audit(
+            revisionAudit(
               "download_resource.downlined",
               actor,
               resource,
@@ -824,7 +871,7 @@ export const downloadResourceService = {
           );
           const pending = await cleanup(tx, current.id, previousDraft);
           await tx.appendAudit(
-            audit(
+            revisionAudit(
               "download_resource.draft_discarded",
               actor,
               resource,
@@ -903,7 +950,7 @@ export const downloadResourceService = {
         );
         const pending = await cleanup(tx, current.id, previousDraft);
         await tx.appendAudit(
-          audit(
+          revisionAudit(
             "download_resource.file_removed",
             actor,
             resource,
@@ -1041,6 +1088,10 @@ export const downloadResourceService = {
       kind === "cover" ? document.coverObjectKey : document.objectKey,
       range as { start: number; end: number } | undefined,
     );
+    if (kind !== "cover" && opened.size !== document.byteSize) {
+      opened.readable.destroy();
+      return null;
+    }
     return {
       ...opened,
       filename: `${resource.name}.${kind === "cover" ? "webp" : "pdf"}`,

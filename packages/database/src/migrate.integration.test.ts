@@ -97,12 +97,33 @@ describePostgres("download resource contraction migration", () => {
       const artifact = await verify.query<{
         objectKey: string;
         filename: string;
+        mediaType: string;
+        byteSize: number;
+        sha256: string;
+        pageCount: number;
+        coverObjectKey: string;
+        revisionKind: string;
+        slot: string;
       }>(
-        `SELECT object_key AS "objectKey", original_filename AS filename FROM download_resource_artifacts WHERE revision_id = $1`,
+        `SELECT object_key AS "objectKey", original_filename AS filename,
+                media_type AS "mediaType", byte_size AS "byteSize", sha256,
+                page_count AS "pageCount", cover_object_key AS "coverObjectKey",
+                revision_kind::text AS "revisionKind", slot::text AS slot
+         FROM download_resource_artifacts WHERE revision_id = $1`,
         [inserted.rows[0]?.id],
       );
       expect(artifact.rows).toEqual([
-        { objectKey: "downloads/legacy.pdf", filename: "yuanqi-fullstack.pdf" },
+        {
+          objectKey: "downloads/legacy.pdf",
+          filename: "yuanqi-fullstack.pdf",
+          mediaType: "application/pdf",
+          byteSize: 1024,
+          sha256: "a".repeat(64),
+          pageCount: 3,
+          coverObjectKey: "downloads/legacy.webp",
+          revisionKind: "document",
+          slot: "document",
+        },
       ]);
       const columns = await verify.query<{ columnName: string }>(
         `SELECT column_name AS "columnName" FROM information_schema.columns WHERE table_name = 'download_resource_revisions'`,
