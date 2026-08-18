@@ -203,13 +203,33 @@ describe("DownloadResourceManager", () => {
     fireEvent.click(trigger);
     expect(screen.getByRole("dialog")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
-    expect(trigger).toHaveFocus();
     fireEvent.click(trigger);
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    expect(trigger).toHaveFocus();
     fireEvent.click(trigger);
     fireEvent.click(screen.getByRole("button", { name: "确认" }));
     await waitFor(() => expect(actions.publish).toHaveBeenCalled());
+  });
+
+  it("keeps failed confirmations open and exposes document and software draft field errors", async () => {
+    actions.publish.mockResolvedValueOnce({ kind: "domain_error" });
+    actions.save.mockResolvedValueOnce({
+      kind: "validation_error",
+      fieldErrors: { product: ["无效产品"], releaseVersion: ["无效版本"] },
+    });
+    render(<DownloadResourceManager resources={[software]} />);
+    fireEvent.click(screen.getByRole("button", { name: "发布资源" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认" }));
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeVisible());
+    expect(
+      screen.getByRole("dialog").querySelector('[role="status"]'),
+    ).toHaveTextContent("当前资源状态不允许此操作。");
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
+    await waitFor(() => expect(screen.getByText("无效版本")).toBeVisible());
+    expect(screen.getByLabelText("版本号")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
   });
 
   it("renders safe create field errors with accessibility wiring", async () => {

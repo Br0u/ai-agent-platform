@@ -119,6 +119,7 @@ function ActionForm({
   const [state, formAction, pending] = useActionState(action, idle);
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const confirm = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (state.kind === "success") {
       onResource(state.resource);
@@ -145,7 +146,7 @@ function ActionForm({
       </p>
       {open && state.kind !== "success" ? (
         <AssistantSkillModal
-          initialFocusRef={trigger}
+          initialFocusRef={confirm}
           labelledBy="download-confirm-heading"
           onClose={() => {
             setOpen(false);
@@ -180,11 +181,19 @@ function ActionForm({
               <button
                 className={`download-resource-manager__button download-resource-manager__button--${tone}`}
                 disabled={pending}
+                ref={confirm}
                 type="submit"
               >
                 {pending ? "正在处理…" : "确认"}
               </button>
             </form>
+            <p
+              aria-live="polite"
+              className="download-resource-manager__message"
+              role="status"
+            >
+              {message(state)}
+            </p>
           </section>
         </AssistantSkillModal>
       ) : null}
@@ -339,6 +348,15 @@ function Editor({
       : defaultPolicies(resourceCategory(resource)),
   );
   const [explicitPolicy, setExplicitPolicy] = useState(Boolean(current));
+  const field = (name: string) => ({
+    "aria-describedby":
+      state.kind === "validation_error" && state.fieldErrors?.[name]
+        ? `download-field-${name}`
+        : undefined,
+    "aria-invalid": Boolean(
+      state.kind === "validation_error" && state.fieldErrors?.[name],
+    ),
+  });
   useEffect(() => {
     if (state.kind === "success") {
       onResource(state.resource);
@@ -506,15 +524,18 @@ function Editor({
           <label>
             所属产品
             <input
+              {...field("product")}
               defaultValue={current?.product ?? ""}
               maxLength={120}
               name="product"
               required
             />
+            <FieldError name="product" state={state} />
           </label>
           <label>
             资源分类
             <select
+              {...field("category")}
               aria-label="资源分类"
               value={editCategory}
               name="category"
@@ -530,31 +551,37 @@ function Editor({
                 </option>
               ))}
             </select>
+            <FieldError name="category" state={state} />
           </label>
           <label>
             资料类型
             <input
+              {...field("resourceType")}
               defaultValue={current?.resourceType ?? ""}
               maxLength={80}
               name="resourceType"
               required
             />
+            <FieldError name="resourceType" state={state} />
           </label>
           <label>
             排序
             <input
+              {...field("sortOrder")}
               defaultValue={current?.sortOrder ?? 0}
               min={0}
               name="sortOrder"
               required
               type="number"
             />
+            <FieldError name="sortOrder" state={state} />
           </label>
           {resource.kind === "document" ? (
             <>
               <label>
                 预览权限
                 <select
+                  {...field("previewPolicy")}
                   aria-label="预览权限"
                   value={policies.previewPolicy}
                   name="previewPolicy"
@@ -575,10 +602,12 @@ function Editor({
                   <option value="public">可预览</option>
                   <option value="contact">不可预览</option>
                 </select>
+                <FieldError name="previewPolicy" state={state} />
               </label>
               <label>
                 下载权限
                 <select
+                  {...field("downloadPolicy")}
                   aria-label="下载权限"
                   value={policies.downloadPolicy}
                   name="downloadPolicy"
@@ -600,12 +629,14 @@ function Editor({
                     可下载
                   </option>
                 </select>
+                <FieldError name="downloadPolicy" state={state} />
               </label>
             </>
           ) : (
             <label>
               版本号
               <input
+                {...field("releaseVersion")}
                 aria-label="版本号"
                 defaultValue={softwareCurrent?.releaseVersion ?? ""}
                 aria-describedby={
@@ -628,12 +659,14 @@ function Editor({
           <label className="download-resource-manager__wide-field">
             资源简介
             <textarea
+              {...field("description")}
               defaultValue={current?.description ?? ""}
               maxLength={500}
               name="description"
               required
               rows={3}
             />
+            <FieldError name="description" state={state} />
           </label>
         </fieldset>
         <div className="download-resource-manager__editor-actions">
