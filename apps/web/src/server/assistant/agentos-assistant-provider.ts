@@ -342,7 +342,7 @@ function isConciseGoRequest(
   return [label, routeTitle].some(
     (destination) =>
       destination !== undefined &&
-      ["去", "请去", "帮我去", "请帮我去"].some((prefix) =>
+      ["去", "请去", "帮我去", "请帮我去", "导航去"].some((prefix) =>
         compactMessage.startsWith(`${prefix}${destination}`),
       ),
   );

@@ -427,6 +427,7 @@ describe("AgentOSAssistantProvider", () => {
     "过去技能中心有哪些内容",
     "去年的技能中心有哪些内容",
     "去掉技能中心链接",
+    "导航去掉技能中心链接",
     "技能名称需要去重",
   ])("does not treat %s as navigation", async (message) => {
     const { provider, runClient } = fixture();
