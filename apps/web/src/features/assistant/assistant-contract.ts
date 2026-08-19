@@ -162,7 +162,7 @@ function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
   );
 }
 
-function hasAtMostCodePoints(value: string, maximum: number): boolean {
+export function hasAtMostCodePoints(value: string, maximum: number): boolean {
   let count = 0;
   const codePoints = value[Symbol.iterator]();
   while (!codePoints.next().done) {
@@ -224,19 +224,21 @@ export function isAssistantPresetQuestion(
 }
 
 export function isSafeAssistantActionHref(href: string): boolean {
-  const hashIndex = href.indexOf("#");
-  const pathname = hashIndex === -1 ? href : href.slice(0, hashIndex);
-  const fragment = hashIndex === -1 ? "" : href.slice(hashIndex + 1);
+  const suffixIndex = href.search(/[?#]/u);
+  const pathname = suffixIndex === -1 ? href : href.slice(0, suffixIndex);
+  const suffix = suffixIndex === -1 ? "" : href.slice(suffixIndex);
 
-  if (!isNormalizedPathname(pathname) || href.includes("?")) return false;
+  if (!isNormalizedPathname(pathname)) return false;
 
   try {
     const decodedPathname = decodeURIComponent(pathname);
-    const decodedFragment = decodeURIComponent(fragment);
+    const decodedSuffix = decodeURIComponent(suffix);
     return (
       !decodedPathname.startsWith("//") &&
       !/[\\?#\u0000-\u001f\u007f]/u.test(decodedPathname) &&
-      !/[\\\u0000-\u001f\u007f]/u.test(decodedFragment)
+      !/[\\\u0000-\u001f\u007f]/u.test(decodedSuffix) &&
+      !decodedSuffix.includes("://") &&
+      !decodedSuffix.includes("//")
     );
   } catch {
     return false;
@@ -374,9 +376,12 @@ export function isAssistantStreamEventData(
       typeof input.action.pathname === "string" &&
       hasAtMostCodePoints(
         input.action.pathname,
+        ASSISTANT_ACTION_HREF_MAX_CODE_POINTS,
+      ) &&
+      hasAtMostCodePoints(
+        input.action.pathname.split(/[?#]/u, 1)[0] ?? "",
         ASSISTANT_PATHNAME_MAX_CODE_POINTS,
       ) &&
-      isNormalizedPathname(input.action.pathname) &&
       isSafeAssistantActionHref(input.action.pathname) &&
       isNonBlankBoundedString(
         input.action.label,

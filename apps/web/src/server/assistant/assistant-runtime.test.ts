@@ -16,7 +16,6 @@ import {
   getAssistantRuntime,
   readSafeAssistantRuntimeStatus,
 } from "./assistant-runtime";
-import { ASSISTANT_FINAL_ANSWER_MARKER } from "./assistant-content-filter";
 
 const VALID_ENVIRONMENT = {
   ASSISTANT_PUBLIC_ORIGIN: "https://portal.example.com",
@@ -39,6 +38,7 @@ const AGENTOS_ENVIRONMENT = {
 
 const LEGACY_RUNTIME_KEY = Symbol.for("ai-agent-platform:assistant:runtime:v1");
 const RUNTIME_KEY = Symbol.for("ai-agent-platform:assistant:runtime:v2");
+const finalAnswer = (content: string) => JSON.stringify({ answer: content });
 
 afterEach(() => {
   delete (globalThis as Record<PropertyKey, unknown>)[LEGACY_RUNTIME_KEY];
@@ -65,7 +65,7 @@ function availableHealthClient(): AgentOSClient {
 
 function runClient(): AgentOSRunClient {
   const runAgent = vi.fn<AgentOSRunClient["runAgent"]>(async () => ({
-    content: `${ASSISTANT_FINAL_ANSWER_MARKER}码多多回答`,
+    content: finalAnswer("码多多回答"),
   }));
   return {
     runAgent,
@@ -507,7 +507,7 @@ describe("assistant server runtime", () => {
       .mockRejectedValueOnce(new AgentOSRunClientError("timeout"))
       .mockRejectedValueOnce(new AgentOSRunClientError("timeout"))
       .mockResolvedValueOnce({
-        content: `${ASSISTANT_FINAL_ANSWER_MARKER}恢复后的真实回答`,
+        content: finalAnswer("恢复后的真实回答"),
       });
     const runtime = createAssistantRuntime({
       environment: AGENTOS_ENVIRONMENT,

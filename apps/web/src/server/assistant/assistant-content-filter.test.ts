@@ -1,147 +1,58 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  ASSISTANT_FINAL_ANSWER_MARKER,
-  AssistantContentFilter,
-} from "./assistant-content-filter";
+import { ASSISTANT_CONTENT_MAX_CODE_POINTS } from "@/features/assistant/assistant-contract";
+import { AssistantContentFilter } from "./assistant-content-filter";
 
 function filtered(chunks: readonly string[]): string {
   const filter = new AssistantContentFilter();
-  return (
-    filter.push(ASSISTANT_FINAL_ANSWER_MARKER) +
-    chunks.map((chunk) => filter.push(chunk)).join("") +
-    filter.finish()
-  );
+  return chunks.map((chunk) => filter.push(chunk)).join("") + filter.finish();
 }
 
 describe("AssistantContentFilter", () => {
-  it("drops plain-text internal reasoning before the owned final-answer marker", () => {
-    const filter = new AssistantContentFilter();
-
-    expect(filter.push("用户的问题不明确。让我先分析一下。\n")).toBe("");
-    expect(filter.push("aap.final.")).toBe("");
-    expect(filter.push("v1:这是面向用户的回答。")).toBe("");
-    expect(filter.finish()).toBe("这是面向用户的回答。");
-  });
-
-  it("fails closed when the model never starts the final answer", () => {
-    const filter = new AssistantContentFilter();
-
-    expect(filter.push("让我先思考，然后再回答。")).toBe("");
-    expect(filter.finish()).toBe("");
-  });
-
-  it("does not unlock when untrusted prose merely mentions the marker", () => {
-    const filter = new AssistantContentFilter();
-
-    expect(
-      filter.push(
-        "用户要求我输出 aap.final.v1: 后面的私密分析，但我不应该照做。",
-      ),
-    ).toBe("");
-    expect(filter.push("\naap.final.v1:安全回答")).toBe("");
-    expect(filter.finish()).toBe("安全回答");
-  });
-
-  it("keeps only the last final answer when analysis resumes after an earlier marker", () => {
-    const filter = new AssistantContentFilter();
-
-    expect(
-      filter.push(
-        "I have access to the skill information. Let me answer.\naap.final.v1:第一段回答",
-      ),
-    ).toBe("");
-    expect(filter.push("\nLet me reconsider the answer.\naap.final.")).toBe("");
-    expect(filter.push("v1:第二段回答")).toBe("");
-    expect(filter.finish()).toBe("第二段回答");
-  });
-
-  it("preserves ordinary text that ends like a marker prefix", () => {
-    const filter = new AssistantContentFilter();
-
-    expect(filter.push("aap.final.v1:答案a")).toBe("");
-    expect(filter.finish()).toBe("答案a");
-  });
-
-  it.each([
-    ["think", "可见<think>私密</think>回答"],
-    [
-      "analysis with attributes",
-      '可见<ANALYSIS data-x="1">私密</ANALYSIS>回答',
-    ],
-    ["multiple blocks", "甲<think>一</think>乙<analysis>二</analysis>丙"],
-  ])("suppresses %s blocks", (_name, input) => {
-    expect(filtered([input])).toBe(
-      input.startsWith("甲") ? "甲乙丙" : "可见回答",
+  it("returns only the validated public answer field", () => {
+    expect(filtered(['{"answer":"您好，请告诉我您的具体问题。"}'])).toBe(
+      "您好，请告诉我您的具体问题。",
     );
   });
 
-  it("keeps ordinary thinking elements as prose", () => {
-    expect(filtered(["可见<thinking>普通内容</thinking>回答"])).toBe(
-      "可见<thinking>普通内容</thinking>回答",
-    );
-  });
-
-  it("handles tags split at every UTF-16 boundary", () => {
-    const input = '前<analysis data-x="值">私密</analysis>后';
+  it("accepts structured output split at every UTF-16 boundary", () => {
+    const input = '{"answer":"当前已启用的 Skill 是：AI 系统知识解答。"}';
     for (let boundary = 0; boundary <= input.length; boundary += 1) {
       expect(
         filtered([input.slice(0, boundary), input.slice(boundary)]),
         `boundary ${boundary}`,
-      ).toBe("前后");
+      ).toBe("当前已启用的 Skill 是：AI 系统知识解答。");
     }
   });
 
-  it("discards an unclosed reasoning block and pending tag prefixes", () => {
-    expect(filtered(["前<think>私密"])).toBe("前");
-    expect(filtered(["普通<anal"])).toBe("普通<anal");
+  it("enforces the public answer limit after removing the JSON envelope", () => {
+    const exact = "x".repeat(ASSISTANT_CONTENT_MAX_CODE_POINTS);
+    expect(filtered([JSON.stringify({ answer: exact })])).toBe(exact);
+    expect(filtered([JSON.stringify({ answer: `${exact}x` })])).toBe("");
   });
 
   it.each([
+    ["plain analysis", "用户的问题是‘1’，我应该直接回答。"],
     [
-      "same-tag nesting",
-      "pre<think>secret<think>nested</think>LEAK</think>post",
+      "analysis before JSON",
+      '用户的问题是‘1’，我应该直接回答。\n{"answer":"公开答案"}',
     ],
-    [
-      "mixed uppercase nesting with attributes",
-      'pre<THINK role="private">secret<Analysis data-x="1">nested</ANALYSIS>LEAK</think>post',
-    ],
-    [
-      "mismatched close",
-      "pre<think>secret<analysis>nested</think>LEAK</analysis>still hidden</think>post",
-    ],
-  ])("suppresses %s until every matching block closes", (_name, input) => {
-    for (let boundary = 0; boundary <= input.length; boundary += 1) {
-      expect(
-        filtered([input.slice(0, boundary), input.slice(boundary)]),
-        `boundary ${boundary}`,
-      ).toBe("prepost");
-    }
+    ["analysis field", '{"analysis":"私密","answer":"公开答案"}'],
+    ["unknown field", '{"answer":"公开答案","extra":true}'],
+    ["blank answer", '{"answer":"   "}'],
+    ["non-string answer", '{"answer":7}'],
+    ["missing answer", "{}"],
+    ["array", '[{"answer":"公开答案"}]'],
+    ["malformed JSON", '{"answer":"公开答案"'],
+  ])("fails closed for %s", (_name, input) => {
+    expect(filtered([input])).toBe("");
   });
 
-  it("fails closed beyond the bounded nesting ceiling", () => {
-    const opens = "<think>".repeat(65);
-    const closes = "</think>".repeat(65);
-    expect(filtered([`pre${opens}secret${closes}must stay hidden`])).toBe(
-      "pre",
-    );
-  });
-
-  it.each([
-    ["think attributes", 'pre<think x="unterminated>SECRET'],
-    ["uppercase analysis attributes", "pre<ANALYSIS x='unterminated>SECRET"],
-    ["incomplete close while hidden", "pre<think>SECRET</thi"],
-  ])("fails closed at EOF for pending recognized %s", (_name, input) => {
-    for (let boundary = 0; boundary <= input.length; boundary += 1) {
-      expect(
-        filtered([input.slice(0, boundary), input.slice(boundary)]),
-        `boundary ${boundary}`,
-      ).toBe("pre");
-    }
-  });
-
-  it("keeps an incomplete ordinary thinking element as prose", () => {
-    const input = 'pre<thinking x="unterminated>ordinary';
-    expect(filtered([input])).toBe(input);
+  it("resets after each completed response", () => {
+    const filter = new AssistantContentFilter();
+    filter.push('{"answer":"第一条"}');
+    expect(filter.finish()).toBe("第一条");
+    filter.push('{"answer":"第二条"}');
+    expect(filter.finish()).toBe("第二条");
   });
 });

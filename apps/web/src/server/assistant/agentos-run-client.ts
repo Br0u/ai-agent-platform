@@ -12,6 +12,8 @@ import {
 import { ASSISTANT_CONTENT_MAX_CODE_POINTS } from "@/features/assistant/assistant-contract";
 
 export const AGENTOS_RUN_MAX_RESPONSE_BYTES = 4 * 1_024 * 1_024;
+const AGENTOS_STREAM_CONTENT_MAX_CODE_POINTS =
+  ASSISTANT_CONTENT_MAX_CODE_POINTS * 12 + 64;
 
 const DEFAULT_RUN_TIMEOUT_MS = 55_000;
 const MIN_RUN_TIMEOUT_MS = 51_000;
@@ -245,7 +247,7 @@ async function* parseAgentOSRunStream(
     }
     if (event.content.length === 0) return;
     contentCodePoints += Array.from(event.content).length;
-    if (contentCodePoints > ASSISTANT_CONTENT_MAX_CODE_POINTS) {
+    if (contentCodePoints > AGENTOS_STREAM_CONTENT_MAX_CODE_POINTS) {
       throw new AgentOSRunClientError(
         "invalid_response",
         "stream_content_too_large",

@@ -1034,6 +1034,46 @@ describe("POST /api/v1/assistant/chat", () => {
     );
   });
 
+  it("loads the public Skill center for a content request phrased with 查看", async () => {
+    const deps = dependencies();
+    const currentPage: PublicPageContext = {
+      pathname: "/",
+      search: "",
+      title: "首页",
+      text: "首页正文",
+      links: [],
+    };
+    const skillCenterPage: PublicPageContext = {
+      pathname: "/product/skills",
+      search: "",
+      title: "技能中心",
+      text: "公开产品技能中心正文",
+      links: [],
+    };
+    deps.pageResolver.load
+      .mockResolvedValueOnce(currentPage)
+      .mockResolvedValueOnce(skillCenterPage);
+
+    const response = await createAssistantChatHandler(deps)(
+      request(
+        JSON.stringify({
+          message: "查看技能中心有哪些技能。",
+          context: { pathname: "/" },
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.pageResolver.load).toHaveBeenNthCalledWith(
+      2,
+      { pathname: "/product/skills", search: "" },
+      expect.any(AbortSignal),
+    );
+    expect(deps.provider.reply).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ pageContext: skillCenterPage }),
+    );
+  });
+
   it("uses the current solution directory instead of its redirecting parent route", async () => {
     const deps = dependencies();
     const currentPage: PublicPageContext = {

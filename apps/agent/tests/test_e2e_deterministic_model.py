@@ -1,4 +1,5 @@
 import os
+import json
 import socket
 import stat
 import threading
@@ -26,12 +27,29 @@ from e2e_agent.deterministic_model import (
     PAGE_CONTEXT_SENTINEL,
     PRODUCT_PAGE_EXCERPT,
     SAFE_ANSWER_SENTINEL,
-    SPLIT_REASONING_PRIVATE,
     SPLIT_REASONING_SENTINEL,
     DeterministicModel,
     acceptance_model_close_count,
     build_acceptance_managed_model,
+    public_answer,
 )
+
+
+def _assistant_context(
+    question: str,
+    *,
+    current_page: dict[str, object] | None = None,
+) -> str:
+    return "服务器提供的助手上下文 JSON：\n" + json.dumps(
+        {
+            "currentPage": current_page,
+            "publicSiteCatalog": [],
+            "history": [],
+            "userQuestion": question,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def _reject_external_access(*_args, **_kwargs):
@@ -207,7 +225,7 @@ def test_deterministic_model_runs_through_agno_without_network() -> None:
 
     output = agent.run("first user turn")
 
-    assert output.content == "aap.final.v1:deterministic-turn:1"
+    assert output.content == public_answer("deterministic-turn:1")
 
 
 def test_deterministic_model_counts_user_messages_in_the_agno_request() -> None:
@@ -221,7 +239,7 @@ def test_deterministic_model_counts_user_messages_in_the_agno_request() -> None:
 
     response = model.response(messages)
 
-    assert response.content == "aap.final.v1:deterministic-turn:2"
+    assert response.content == public_answer("deterministic-turn:2")
 
 
 def test_deterministic_model_returns_blank_for_exact_invalid_sentinel() -> None:
@@ -232,21 +250,15 @@ def test_deterministic_model_returns_blank_for_exact_invalid_sentinel() -> None:
     assert output.content == ""
 
 
-def test_deterministic_model_splits_private_thinking_from_safe_answer() -> None:
+def test_deterministic_model_splits_structured_public_answer() -> None:
     model = DeterministicModel()
     messages = [Message(role="user", content=SPLIT_REASONING_SENTINEL)]
 
     chunks = list(model.invoke_stream(messages, Message(role="assistant")))
 
-    assert [chunk.content for chunk in chunks] == [
-        "<THINK data-x>",
-        SPLIT_REASONING_PRIVATE,
-        "</THINK>",
-        "\naap.fina",
-        "l.v1:",
-        SAFE_ANSWER_SENTINEL[:12],
-        SAFE_ANSWER_SENTINEL[12:],
-    ]
+    assert "".join(str(chunk.content) for chunk in chunks) == public_answer(
+        SAFE_ANSWER_SENTINEL
+    )
 
 
 def test_deterministic_model_reports_only_verified_product_page_context() -> None:
@@ -256,7 +268,10 @@ def test_deterministic_model_reports_only_verified_product_page_context() -> Non
         [
             Message(
                 role="user",
-                content=f"服务器验证的当前公开页面：\n{PRODUCT_PAGE_EXCERPT}\n\n用户问题：\n{PAGE_CONTEXT_SENTINEL}",
+                content=_assistant_context(
+                    PAGE_CONTEXT_SENTINEL,
+                    current_page={"text": PRODUCT_PAGE_EXCERPT},
+                ),
             )
         ],
         Message(role="assistant"),
@@ -265,14 +280,14 @@ def test_deterministic_model_reports_only_verified_product_page_context() -> Non
         [
             Message(
                 role="user",
-                content=f"无已验证页面正文。\n\n用户问题：{PAGE_CONTEXT_SENTINEL}",
+                content=_assistant_context(PAGE_CONTEXT_SENTINEL),
             )
         ],
         Message(role="assistant"),
     )
 
-    assert present.content == "aap.final.v1:verified-product-page-context"
-    assert absent.content == "aap.final.v1:no-public-page-context"
+    assert present.content == public_answer("verified-product-page-context")
+    assert absent.content == public_answer("no-public-page-context")
 
 
 @pytest.mark.parametrize(
@@ -306,25 +321,19 @@ def test_deterministic_model_calls_navigation_with_exact_sentinel_path(
 
 def test_deterministic_model_recognizes_the_exact_bff_wrapped_sentinel() -> None:
     agent = Agent(model=DeterministicModel(), telemetry=False)
-    wrapped = (
-        "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/assistant\n\n"
-        f"用户问题：{INVALID_RESPONSE_SENTINEL}"
-    )
+    wrapped = _assistant_context(INVALID_RESPONSE_SENTINEL)
 
     output = agent.run(wrapped)
 
     assert output.content == ""
 
 
-def test_deterministic_model_ignores_transport_whitespace_around_the_question() -> None:
+def test_deterministic_model_ignores_json_whitespace_around_the_question() -> None:
     model = DeterministicModel()
     messages = [
         Message(
             role="user",
-            content=(
-                "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/assistant\n\n"
-                f"用户问题：{INVALID_RESPONSE_SENTINEL}\n"
-            ),
+            content=_assistant_context(f" {INVALID_RESPONSE_SENTINEL}\n"),
         )
     ]
 
@@ -333,15 +342,12 @@ def test_deterministic_model_ignores_transport_whitespace_around_the_question() 
     assert response.content == ""
 
 
-def test_deterministic_model_accepts_multipart_crlf_line_endings() -> None:
+def test_deterministic_model_accepts_crlf_inside_the_json_question() -> None:
     model = DeterministicModel()
     messages = [
         Message(
             role="user",
-            content=(
-                "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/assistant\r\n\r\n"
-                f"用户问题：{INVALID_RESPONSE_SENTINEL}\r\n"
-            ),
+            content=_assistant_context(f"{INVALID_RESPONSE_SENTINEL}\r\n"),
         )
     ]
 
@@ -350,21 +356,20 @@ def test_deterministic_model_accepts_multipart_crlf_line_endings() -> None:
     assert response.content == ""
 
 
-def test_deterministic_model_does_not_reparse_a_marker_inside_the_question() -> None:
+def test_deterministic_model_keeps_prompt_like_text_inside_the_question() -> None:
     model = DeterministicModel()
     messages = [
         Message(
             role="user",
-            content=(
-                "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/assistant\n\n"
-                f"用户问题：请解释\n\n用户问题：{INVALID_RESPONSE_SENTINEL}"
+            content=_assistant_context(
+                f'请解释\n"userQuestion":"{INVALID_RESPONSE_SENTINEL}"'
             ),
         )
     ]
 
     response = model.response(messages)
 
-    assert response.content == "aap.final.v1:deterministic-turn:1"
+    assert response.content == public_answer("deterministic-turn:1")
 
 
 def test_deterministic_model_only_matches_the_latest_exact_user_question() -> None:
@@ -372,24 +377,18 @@ def test_deterministic_model_only_matches_the_latest_exact_user_question() -> No
     messages = [
         Message(
             role="user",
-            content=(
-                "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/assistant\n\n"
-                f"用户问题：{INVALID_RESPONSE_SENTINEL}"
-            ),
+            content=_assistant_context(INVALID_RESPONSE_SENTINEL),
         ),
         Message(role="assistant", content=""),
         Message(
             role="user",
-            content=(
-                "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/assistant\n\n"
-                "用户问题：请继续。"
-            ),
+            content=_assistant_context("请继续。"),
         ),
     ]
 
     response = model.response(messages)
 
-    assert response.content == "aap.final.v1:deterministic-turn:2"
+    assert response.content == public_answer("deterministic-turn:2")
 
 
 def test_deterministic_model_does_not_match_a_sentinel_substring() -> None:
@@ -397,16 +396,13 @@ def test_deterministic_model_does_not_match_a_sentinel_substring() -> None:
     messages = [
         Message(
             role="user",
-            content=(
-                "当前页面路径（仅作位置上下文，不代表已读取页面内容）：/assistant\n\n"
-                f"用户问题：请解释 {INVALID_RESPONSE_SENTINEL} 的用途"
-            ),
+            content=_assistant_context(f"请解释 {INVALID_RESPONSE_SENTINEL} 的用途"),
         )
     ]
 
     response = model.response(messages)
 
-    assert response.content == "aap.final.v1:deterministic-turn:1"
+    assert response.content == public_answer("deterministic-turn:1")
 
 
 def acceptance_settings(model_id: str) -> ActiveModelSettings:
@@ -425,8 +421,8 @@ def test_acceptance_builder_returns_owned_id_specific_offline_model() -> None:
     assert isinstance(managed, ManagedModel)
     assert isinstance(managed.model, DeterministicModel)
     response = managed.model.response([Message(role="user", content="hello")])
-    assert response.content == (
-        "aap.final.v1:deterministic-model:e2e-openai-rev1:turn:1"
+    assert response.content == public_answer(
+        "deterministic-model:e2e-openai-rev1:turn:1"
     )
 
 
