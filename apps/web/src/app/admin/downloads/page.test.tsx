@@ -7,7 +7,7 @@ vi.mock("@/server/auth/access", () => ({
   requirePermission: mocks.requirePermission,
 }));
 vi.mock("@/server/downloads/service", () => ({
-  downloadResourceService: { listAdminResources: mocks.list },
+  downloadResourceService: { listTypedAdminResources: mocks.list },
 }));
 vi.mock("@/components/admin/download-resource-manager", () => ({
   DownloadResourceManager: ({ resources }: { resources: unknown[] }) => (

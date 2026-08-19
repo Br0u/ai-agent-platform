@@ -3,7 +3,7 @@ import {
   artifactErrorResponse,
   artifactResponse,
   parseSingleByteRange,
-} from "@/server/downloads/pdf-response";
+} from "@/server/downloads/artifact-response";
 import { downloadResourceService } from "@/server/downloads/service";
 
 const UUID =
@@ -31,9 +31,9 @@ async function serve(
     const resourceId = (await context.params).resourceId;
     if (!resourceId || !UUID.test(resourceId))
       return artifactErrorResponse(request, 404, "not_found");
-    let artifact = await downloadResourceService.getAdminDraftArtifact(
+    let artifact = await downloadResourceService.openAdminDraftArtifact(
       resourceId,
-      "pdf",
+      "document",
     );
     if (!artifact) return artifactErrorResponse(request, 404, "not_found");
     const range = parseSingleByteRange(
@@ -42,9 +42,9 @@ async function serve(
     );
     if (range && range !== "invalid") {
       artifact.readable.destroy();
-      artifact = await downloadResourceService.getAdminDraftArtifact(
+      artifact = await downloadResourceService.openAdminDraftArtifact(
         resourceId,
-        "pdf",
+        "document",
         range,
       );
       if (!artifact) return artifactErrorResponse(request, 404, "not_found");
@@ -53,9 +53,9 @@ async function serve(
       request,
       artifact,
       contentType: "application/pdf",
+      expectedByteSize: artifact.size,
       filename: "resource.pdf",
       disposition: "inline",
-      noStore: true,
     });
   } catch (caught) {
     return error(request, caught);

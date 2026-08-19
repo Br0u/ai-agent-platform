@@ -2,7 +2,7 @@ import {
   artifactErrorResponse,
   artifactResponse,
   parseSingleByteRange,
-} from "@/server/downloads/pdf-response";
+} from "@/server/downloads/artifact-response";
 import { downloadResourceService } from "@/server/downloads/service";
 
 const KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
@@ -29,10 +29,11 @@ async function serve(
       !UUID.test(revisionId)
     )
       return notFound(request);
-    let artifact = await downloadResourceService.getPublicArtifact(
+    let artifact = await downloadResourceService.openPublishedArtifact(
       resourceKey,
-      "cover",
+      "document",
       undefined,
+      "cover",
       revisionId,
     );
     if (!artifact) return notFound(request);
@@ -42,10 +43,11 @@ async function serve(
     );
     if (range && range !== "invalid") {
       artifact.readable.destroy();
-      artifact = await downloadResourceService.getPublicArtifact(
+      artifact = await downloadResourceService.openPublishedArtifact(
         resourceKey,
-        "cover",
+        "document",
         range,
+        "cover",
         revisionId,
       );
       if (!artifact) return notFound(request);
@@ -56,7 +58,6 @@ async function serve(
       contentType: "image/webp",
       filename: artifact.filename,
       disposition: "inline",
-      noStore: true,
     });
     if (response.ok)
       response.headers.set(

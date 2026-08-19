@@ -327,25 +327,30 @@ while true; do
     "SELECT '__AAP_DOWNLOAD_KEYS_BEGIN__';" \
     "SELECT artifact_key, expected_sha256, expected_byte_size
        FROM (
-         SELECT revision.pdf_object_key AS artifact_key,
-                revision.sha256 AS expected_sha256,
-                revision.byte_size::text AS expected_byte_size
+         SELECT artifact.object_key AS artifact_key,
+                artifact.sha256 AS expected_sha256,
+                artifact.byte_size::text AS expected_byte_size
          FROM download_resources AS resource
          JOIN download_resource_revisions AS revision
            ON revision.resource_id = resource.id
           AND revision.id = ANY(array_remove(ARRAY[resource.published_revision_id, resource.draft_revision_id], NULL))
+         JOIN download_resource_artifacts AS artifact
+           ON artifact.revision_id = revision.id
+          AND artifact.revision_kind = revision.resource_kind
          WHERE revision.cleanup_pending_at IS NULL
-           AND revision.pdf_object_key IS NOT NULL
          UNION ALL
-         SELECT revision.cover_object_key AS artifact_key,
+         SELECT artifact.cover_object_key AS artifact_key,
                 '-' AS expected_sha256,
                 '-' AS expected_byte_size
          FROM download_resources AS resource
          JOIN download_resource_revisions AS revision
            ON revision.resource_id = resource.id
           AND revision.id = ANY(array_remove(ARRAY[resource.published_revision_id, resource.draft_revision_id], NULL))
+         JOIN download_resource_artifacts AS artifact
+           ON artifact.revision_id = revision.id
+          AND artifact.revision_kind = revision.resource_kind
          WHERE revision.cleanup_pending_at IS NULL
-           AND revision.cover_object_key IS NOT NULL
+           AND artifact.cover_object_key IS NOT NULL
        ) AS referenced
        ORDER BY artifact_key COLLATE \"C\",
                 expected_sha256 COLLATE \"C\",
@@ -369,7 +374,7 @@ while true; do
       exit 1
     fi
     case "$object_key" in
-      *.pdf)
+      *.pdf|*-windows.exe|*-windows.msi|*-windows.zip|*-macos.dmg|*-macos.pkg|*-macos.zip)
         case "$expected_sha256" in
           ''|*[!0-9a-f]*) echo "backup download artifact manifest is invalid" >&2; exit 1 ;;
         esac
@@ -422,7 +427,7 @@ while true; do
     download_key_count=$((download_key_count + 1))
     printf '%s\n' "$object_key" >>"$download_keys_file"
   done <"$download_artifact_entries_file"
-  if grep -Eqv '^objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(pdf|webp)$' "$download_keys_file" || \
+  if grep -Eqv '^objects/[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/([0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(pdf|webp)|[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-windows\.(exe|msi|zip)|[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-macos\.(dmg|pkg|zip))$' "$download_keys_file" || \
      ! LC_ALL=C sort -c -u "$download_keys_file" >/dev/null 2>&1; then
     echo "backup download artifact manifest is invalid" >&2
     exit 1
@@ -458,7 +463,7 @@ while true; do
       exit 1
     fi
     case "$object_key" in
-      *.pdf)
+      *.pdf|*-windows.exe|*-windows.msi|*-windows.zip|*-macos.dmg|*-macos.pkg|*-macos.zip)
         if [ "$artifact_sha256" != "$expected_sha256" ] || \
            [ "$artifact_size" != "$expected_byte_size" ]; then
           echo "backup download artifact metadata mismatch" >&2

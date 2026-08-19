@@ -9,7 +9,11 @@ describe("uploaded homepage content contract", () => {
       lead: "华鲲信息构建全生命周期 AI 能力，采用元启基座平台 + 独立产品矩阵双轨架构，向下夯实底层 AI 支撑能力，向上承载多元智能化业务，赋能企业全域 AI 转型。",
       actions: [
         { label: "查看解决方案", href: "/solutions", variant: "primary" },
-        { label: "申请体验", href: "/trial", variant: "secondary" },
+        {
+          label: "联系我们",
+          href: "/contact?topic=官网咨询",
+          variant: "secondary",
+        },
       ],
     });
 

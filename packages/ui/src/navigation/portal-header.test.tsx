@@ -105,16 +105,14 @@ describe("PortalHeader", () => {
     expect(assistant.nextElementSibling).toBe(contact);
   });
 
-  it("shows contact and trial on desktop and mobile without login or docs", () => {
+  it("hides the trial entry on desktop and mobile by default without affecting contact", () => {
     render(<PortalHeader activeHref="/" items={items} />);
 
-    const trial = screen.getByRole("link", { name: "申请体验" });
     expect(screen.getByRole("link", { name: "联系我们" })).toHaveAttribute(
       "href",
       "/contact",
     );
-    expect(trial).toHaveAttribute("href", "/trial");
-    expect(trial).toHaveClass("site-trial");
+    expect(screen.queryByRole("link", { name: "申请体验" })).toBeNull();
     expect(screen.queryByRole("link", { name: /登录/ })).toBeNull();
     expect(screen.queryByRole("link", { name: "文档" })).toBeNull();
 
@@ -124,13 +122,32 @@ describe("PortalHeader", () => {
       within(mobileDialog).getByRole("link", { name: "联系我们" }),
     ).toHaveAttribute("href", "/contact");
     expect(
-      within(mobileDialog).getByRole("link", { name: "申请体验" }),
-    ).toHaveAttribute("href", "/trial");
+      within(mobileDialog).queryByRole("link", { name: "申请体验" }),
+    ).toBeNull();
     expect(
       within(mobileDialog).queryByRole("link", { name: /登录/ }),
     ).toBeNull();
     expect(
       within(mobileDialog).queryByRole("link", { name: "文档" }),
+    ).toBeNull();
+  });
+
+  it("renders matching trial actions on desktop and mobile when explicitly visible", () => {
+    render(
+      <PortalHeader activeHref="/" items={items} trialEntryVisible={true} />,
+    );
+
+    expect(screen.getByRole("link", { name: "申请体验" })).toHaveAttribute(
+      "href",
+      "/trial",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "打开导航" }));
+    const mobileDialog = screen.getByRole("dialog", { name: "全站导航" });
+    expect(
+      within(mobileDialog).getByRole("link", { name: "申请体验" }),
+    ).toHaveAttribute("href", "/trial");
+    expect(
+      within(mobileDialog).queryByRole("link", { name: /登录/ }),
     ).toBeNull();
   });
 

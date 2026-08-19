@@ -16,6 +16,7 @@ type MockAppShellProps = {
   consoleNavigation: unknown;
   footerNavigation: unknown;
   portalNavigation: unknown;
+  trialEntryVisible?: boolean;
   variant: string;
   assistantEntry?: ReactNode;
   adminBreadcrumb?: readonly { label: string; href?: string }[];
@@ -220,13 +221,21 @@ describe("SiteShell", () => {
     expect(mocks.appShellProps).toMatchObject({
       adminNavigation,
       consoleNavigation,
-      footerNavigation,
       portalNavigation,
     });
     expect(mocks.appShellProps?.adminNavigation).toBe(adminNavigation);
     expect(mocks.appShellProps?.consoleNavigation).toBe(consoleNavigation);
-    expect(mocks.appShellProps?.footerNavigation).toBe(footerNavigation);
     expect(mocks.appShellProps?.portalNavigation).toBe(portalNavigation);
+    expect(mocks.appShellProps?.footerNavigation).not.toBe(footerNavigation);
+    expect(
+      (
+        mocks.appShellProps?.footerNavigation as {
+          items: { href: string }[];
+        }[]
+      )
+        .flatMap((section) => section.items)
+        .some((item) => item.href === "/trial"),
+    ).toBe(false);
   });
 
   it("keeps activeHref synchronized with search, hash, and browser navigation", () => {

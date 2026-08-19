@@ -85,6 +85,18 @@ describe("ContactPage", () => {
     expect(screen.queryByText("当前咨询主题：")).not.toBeInTheDocument();
   });
 
+  it("呈现首页联系我们传入的官网咨询主题", async () => {
+    render(
+      await ContactPage({
+        searchParams: Promise.resolve({ topic: "官网咨询" }),
+      }),
+    );
+
+    expect(screen.getByText("当前咨询主题：")).toHaveTextContent(
+      "当前咨询主题：官网咨询",
+    );
+  });
+
   it("使用联系页专属环境素材并将页脚收敛为备案占位", () => {
     const css = readFileSync("src/app/contact/contact.css", "utf8");
 

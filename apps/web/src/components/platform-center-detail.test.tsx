@@ -145,7 +145,7 @@ describe("PlatformCenterDetail", () => {
         tags,
       );
       expect(screen.getAllByTestId("platform-center-hero-action")).toHaveLength(
-        2,
+        1,
       );
       expect(screen.getAllByTestId("platform-center-section")).toHaveLength(
         slug === "knowledge" ? 4 : 1,
@@ -200,6 +200,28 @@ describe("PlatformCenterDetail", () => {
         "安全中心是元启平台内部的用户、权限与授权治理能力，不等同于独立网络安全产品或等保产品。",
       ),
     ).not.toBeInTheDocument();
+  });
+
+  it.each(["model", "agents", "applications", "skills", "governance"])(
+    "uses the approved closing CTA copy for %s",
+    (slug) => {
+      render(<PlatformCenterDetail slug={slug} />);
+
+      expect(screen.getByTestId("platform-center-cta")).toHaveTextContent(
+        "欢迎与华鲲团队沟通并联系我们申请试用。",
+      );
+      expect(screen.getByTestId("platform-center-cta")).not.toHaveTextContent(
+        "欢迎与华鲲团队沟通并申请试用。",
+      );
+    },
+  );
+
+  it("keeps the coding closing CTA copy unchanged", () => {
+    render(<PlatformCenterDetail slug="coding" />);
+
+    expect(screen.getByTestId("platform-center-cta")).toHaveTextContent(
+      "申请体验编程中心，或与华鲲团队沟通企业级部署方案。",
+    );
   });
 
   it("keeps citations nested in assistant messages on existing subpages", () => {

@@ -8,7 +8,7 @@ export const metadata = metadataForRegisteredRoute("/admin/downloads");
 
 export default async function AdminDownloadsPage() {
   await requirePermission("admin:downloads");
-  const resources = await downloadResourceService.listAdminResources({
+  const resources = await downloadResourceService.listTypedAdminResources({
     search: "",
     page: 1,
     pageSize: 50,

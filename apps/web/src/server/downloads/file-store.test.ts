@@ -14,7 +14,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createDownloadFileStore } from "./file-store";
+import {
+  createDownloadFileStore,
+  type DownloadStageExtension,
+} from "./file-store";
 
 const resourceId = "00000000-0000-4000-8000-000000000001";
 const revisionId = "0191f2a3-4567-7abc-8def-0123456789ab";
@@ -38,7 +41,7 @@ async function temporaryRoot() {
 
 async function writeStage(
   store: ReturnType<typeof createDownloadFileStore>,
-  extension: ".pdf" | ".webp",
+  extension: DownloadStageExtension,
   contents: string,
 ) {
   const stage = await store.createStage(extension);
@@ -125,10 +128,11 @@ describe("download artifact file store", () => {
     expect(path.isAbsolute(stage.path)).toBe(true);
     expect(path.relative(root, stage.path).startsWith("staging/")).toBe(true);
 
-    const objectKey = await store.commit(stage, {
+    const objectKey = await store.commitArtifact(stage, {
       resourceId,
       revisionId,
-      kind: "pdf",
+      slot: "document",
+      extension: ".pdf",
     });
 
     expect(objectKey).toBe(`objects/${resourceId}/${revisionId}.pdf`);
@@ -152,15 +156,95 @@ describe("download artifact file store", () => {
     await expect(store.remove(objectKey)).resolves.toBeUndefined();
   });
 
+  it("accepts only recognized artifact extensions and commits slot-specific keys", async () => {
+    const root = await temporaryRoot();
+    const store = createDownloadFileStore(root);
+
+    await expect(store.createStage(".txt" as ".pdf")).rejects.toThrow(
+      "Invalid stage extension",
+    );
+
+    const document = await writeStage(store, ".pdf", "document");
+    await expect(
+      store.commitArtifact(document, {
+        resourceId,
+        revisionId,
+        slot: "document",
+        extension: ".pdf",
+      }),
+    ).resolves.toBe(`objects/${resourceId}/${revisionId}.pdf`);
+
+    const cover = await writeStage(store, ".webp", "cover");
+    await expect(
+      store.commitArtifact(cover, {
+        resourceId,
+        revisionId,
+        slot: "document",
+        extension: ".webp",
+      }),
+    ).resolves.toBe(`objects/${resourceId}/${revisionId}.webp`);
+
+    const windows = await writeStage(store, ".msi", "windows");
+    await expect(
+      store.commitArtifact(windows, {
+        resourceId,
+        revisionId,
+        slot: "windows",
+        extension: ".msi",
+      }),
+    ).resolves.toBe(`objects/${resourceId}/${revisionId}-windows.msi`);
+
+    const macos = await writeStage(store, ".dmg", "macos");
+    await expect(
+      store.commitArtifact(macos, {
+        resourceId,
+        revisionId,
+        slot: "macos",
+        extension: ".dmg",
+      }),
+    ).resolves.toBe(`objects/${resourceId}/${revisionId}-macos.dmg`);
+  });
+
+  it("rejects slot-extension mismatches and exact byte-size inspection failures", async () => {
+    const store = createDownloadFileStore(await temporaryRoot());
+    const mismatch = await writeStage(store, ".exe", "windows");
+
+    await expect(
+      store.commitArtifact(mismatch, {
+        resourceId,
+        revisionId,
+        slot: "macos",
+        extension: ".exe",
+      }),
+    ).rejects.toThrow("Stage extension does not match artifact slot");
+
+    const stage = await writeStage(store, ".zip", "12345");
+    const key = await store.commitArtifact(stage, {
+      resourceId,
+      revisionId,
+      slot: "windows",
+      extension: ".zip",
+    });
+    await expect(store.inspect(key, 5)).resolves.toMatchObject({ size: 5 });
+    await expect(store.inspect(key, 4)).rejects.toThrow(
+      "Artifact byte size mismatch",
+    );
+  });
+
   it("commits with no-clobber semantics and preserves the original bytes", async () => {
     const root = await temporaryRoot();
     const store = createDownloadFileStore(root);
     const first = await writeStage(store, ".pdf", "original");
     const second = await writeStage(store, ".pdf", "replacement");
-    const input = { resourceId, revisionId, kind: "pdf" } as const;
+    const input = {
+      resourceId,
+      revisionId,
+      slot: "document",
+      extension: ".pdf",
+    } as const;
 
-    const objectKey = await store.commit(first, input);
-    await expect(store.commit(second, input)).rejects.toMatchObject({
+    const objectKey = await store.commitArtifact(first, input);
+    await expect(store.commitArtifact(second, input)).rejects.toMatchObject({
       code: "EEXIST",
     });
     expect(await readFile(path.join(root, objectKey), "utf8")).toBe("original");
@@ -170,10 +254,11 @@ describe("download artifact file store", () => {
     const root = await temporaryRoot();
     const store = createDownloadFileStore(root);
     const stage = await writeStage(store, ".webp", "cover");
-    const objectKey = await store.commit(stage, {
+    const objectKey = await store.commitArtifact(stage, {
       resourceId,
       revisionId,
-      kind: "cover",
+      slot: "document",
+      extension: ".webp",
     });
 
     if (process.platform !== "win32") {
@@ -217,28 +302,44 @@ describe("download artifact file store", () => {
 
     const invalidIdStage = await writeStage(store, ".pdf", "pdf");
     await expect(
-      store.commit(
+      store.commitArtifact(
         { ...invalidIdStage, path: "/tmp/caller.pdf" },
-        { resourceId, revisionId, kind: "pdf" },
+        { resourceId, revisionId, slot: "document", extension: ".pdf" },
       ),
     ).rejects.toThrow("Invalid or consumed stage");
     await expect(
-      store.commit(invalidIdStage, {
+      store.commitArtifact(invalidIdStage, {
         resourceId: "00000000-0000-6000-8000-000000000001",
         revisionId,
-        kind: "pdf",
+        slot: "document",
+        extension: ".pdf",
       }),
     ).rejects.toThrow("Invalid resource ID");
 
     const mismatch = await writeStage(store, ".webp", "cover");
     await expect(
-      store.commit(mismatch, { resourceId, revisionId, kind: "pdf" }),
-    ).rejects.toThrow("Stage extension does not match artifact kind");
+      store.commitArtifact(mismatch, {
+        resourceId,
+        revisionId,
+        slot: "document",
+        extension: ".pdf",
+      }),
+    ).rejects.toThrow("Stage extension does not match artifact slot");
 
     const committed = await writeStage(store, ".pdf", "pdf");
-    await store.commit(committed, { resourceId, revisionId, kind: "pdf" });
+    await store.commitArtifact(committed, {
+      resourceId,
+      revisionId,
+      slot: "document",
+      extension: ".pdf",
+    });
     await expect(
-      store.commit(committed, { resourceId, revisionId, kind: "pdf" }),
+      store.commitArtifact(committed, {
+        resourceId,
+        revisionId,
+        slot: "document",
+        extension: ".pdf",
+      }),
     ).rejects.toThrow("Invalid or consumed stage");
   });
 
@@ -274,7 +375,12 @@ describe("download artifact file store", () => {
     await symlink(target, stage.path);
 
     await expect(
-      store.commit(stage, { resourceId, revisionId, kind: "pdf" }),
+      store.commitArtifact(stage, {
+        resourceId,
+        revisionId,
+        slot: "document",
+        extension: ".pdf",
+      }),
     ).rejects.toThrow("Stage must be a regular file");
   });
 
@@ -292,7 +398,12 @@ describe("download artifact file store", () => {
     };
 
     await expect(
-      store.commit(stage, { resourceId, revisionId, kind: "pdf" }),
+      store.commitArtifact(stage, {
+        resourceId,
+        revisionId,
+        slot: "document",
+        extension: ".pdf",
+      }),
     ).rejects.toThrow("Stage file changed before commit");
     await expect(
       lstat(path.join(root, `objects/${resourceId}/${revisionId}.pdf`)),
@@ -319,7 +430,12 @@ describe("download artifact file store", () => {
 
     try {
       await expect(
-        store.commit(stage, { resourceId, revisionId, kind: "pdf" }),
+        store.commitArtifact(stage, {
+          resourceId,
+          revisionId,
+          slot: "document",
+          extension: ".pdf",
+        }),
       ).rejects.toThrow("Artifact commit rollback failed");
     } finally {
       await chmod(staging, 0o750);
@@ -350,7 +466,12 @@ describe("download artifact file store", () => {
     };
 
     await expect(
-      store.commit(stage, { resourceId, revisionId, kind: "pdf" }),
+      store.commitArtifact(stage, {
+        resourceId,
+        revisionId,
+        slot: "document",
+        extension: ".pdf",
+      }),
     ).rejects.toThrow("injected close failure");
     expect(closeAttempts).toBe(2);
     await expect(lstat(destination)).rejects.toMatchObject({ code: "ENOENT" });
@@ -364,10 +485,11 @@ describe("download artifact file store", () => {
     const root = await temporaryRoot();
     const store = createDownloadFileStore(root);
     const stage = await writeStage(store, ".pdf", "original");
-    const key = await store.commit(stage, {
+    const key = await store.commitArtifact(stage, {
       resourceId,
       revisionId,
-      kind: "pdf",
+      slot: "document",
+      extension: ".pdf",
     });
     const prototype = Object.getPrototypeOf(stage.writable) as FileHandle;
     const originalStat = prototype.stat;
@@ -390,10 +512,11 @@ describe("download artifact file store", () => {
     const root = await temporaryRoot();
     const store = createDownloadFileStore(root);
     const stage = await writeStage(store, ".pdf", "original");
-    const key = await store.commit(stage, {
+    const key = await store.commitArtifact(stage, {
       resourceId,
       revisionId,
-      kind: "pdf",
+      slot: "document",
+      extension: ".pdf",
     });
     await expect(
       Promise.all(Array.from({ length: 20 }, () => store.remove(key))),
@@ -404,10 +527,11 @@ describe("download artifact file store", () => {
     const root = await temporaryRoot();
     const store = createDownloadFileStore(root);
     const stage = await writeStage(store, ".pdf", "12345");
-    const key = await store.commit(stage, {
+    const key = await store.commitArtifact(stage, {
       resourceId,
       revisionId,
-      kind: "pdf",
+      slot: "document",
+      extension: ".pdf",
     });
     const descriptorDirectory =
       process.platform === "linux" ? "/proc/self/fd" : "/dev/fd";

@@ -972,53 +972,56 @@ describe("production deployment security contracts", () => {
     );
   });
 
-  it("matches supported UUID upload paths without making the route case-insensitive", () => {
+  it("matches precise UUID and supported slot upload paths without making the route case-insensitive", () => {
     const template = read("infra/nginx/default.conf.template");
     const uploadLocation =
-      'location ~ "^/api/v1/admin/downloads/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-57][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}/upload$" {';
+      'location ~ "^/api/v1/admin/downloads/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-57][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}/upload/(document|windows|macos)$" {';
     const uploadPath = new RegExp(
-      "^/api/v1/admin/downloads/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-57][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}/upload$",
+      "^/api/v1/admin/downloads/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-57][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}/upload/(document|windows|macos)$",
       "u",
     );
 
     expect(template).toContain(uploadLocation);
     expect(
       uploadPath.test(
-        "/api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload",
+        "/api/v1/admin/downloads/0191F2A3-4567-7ABC-8DEF-0123456789AB/upload/document",
       ),
     ).toBe(true);
     expect(
       uploadPath.test(
         new URL(
-          "https://example.test/api/v1/admin/downloads/0191f2a3-4567-7abc-8def-0123456789ab/upload?draft=true",
+          "https://example.test/api/v1/admin/downloads/0191f2a3-4567-7abc-8def-0123456789ab/upload/macos?draft=true",
         ).pathname,
       ),
     ).toBe(true);
     expect(
       uploadPath.test(
-        "/api/v1/admin/downloads/0191f2a3-4567-6abc-8def-0123456789ab/upload",
+        "/api/v1/admin/downloads/0191f2a3-4567-6abc-8def-0123456789ab/upload/document",
       ),
     ).toBe(false);
     expect(
       uploadPath.test(
-        "/API/v1/admin/downloads/0191f2a3-4567-7abc-8def-0123456789ab/upload",
+        "/API/v1/admin/downloads/0191f2a3-4567-7abc-8def-0123456789ab/upload/windows",
       ),
     ).toBe(false);
   });
 
-  it("streams large POST uploads while rejecting other methods before their bodies", () => {
+  it("streams only supported slot POST uploads while rejecting other methods before their bodies", () => {
     const template = read("infra/nginx/default.conf.template");
     const global = read("infra/nginx/nginx.conf");
     const uploadLocation =
-      'location ~ "^/api/v1/admin/downloads/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-57][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}/upload$" {';
+      'location ~ "^/api/v1/admin/downloads/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-57][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}/upload/(document|windows|macos)$" {';
     const upload = template.split(uploadLocation)[1]?.split("\n  }")[0];
     const catchAll = template.split("location / {")[1]?.split("\n  }")[0];
 
     expect(upload).toBeDefined();
     expect(upload).toMatch(/limit_except POST \{\s+deny all;\s+\}/u);
-    expect(upload).toContain("client_max_body_size 201m;");
+    expect(upload).toContain("client_max_body_size 1025m;");
     expect(upload).toContain("proxy_request_buffering off;");
     expect(upload).toContain("proxy_buffering off;");
+    expect(upload).toContain("client_body_timeout 3600s;");
+    expect(upload).toContain("proxy_send_timeout 3600s;");
+    expect(upload).toContain("proxy_read_timeout 3600s;");
     expect(upload).toContain("proxy_http_version 1.1;");
     for (const header of [
       "proxy_set_header Host $http_host;",
@@ -1033,8 +1036,8 @@ describe("production deployment security contracts", () => {
     }
     expect(upload).toContain("proxy_pass http://web_upstream;");
     expect(global).toContain("client_max_body_size 10m;");
-    expect(global).not.toContain("client_max_body_size 201m;");
-    expect(template.match(/client_max_body_size 201m;/gu)).toHaveLength(1);
+    expect(global).not.toContain("client_max_body_size 1025m;");
+    expect(template.match(/client_max_body_size 1025m;/gu)).toHaveLength(1);
     expect(catchAll).not.toContain("client_max_body_size");
 
     const gate = read("docs/testing/run-ci-gate.sh");
@@ -1048,6 +1051,15 @@ describe("production deployment security contracts", () => {
     expect(gate).toContain("0191f2a3-4567-6abc-8def-0123456789ab");
     expect(gate).toContain("Expect: 100-continue");
     expect(gate).toContain("100 Continue");
+    const upstreamRequest = gate
+      .split("    request_upstream() {")[1]
+      ?.split("\n    }")[0];
+    expect(upstreamRequest).toContain("--post-data=x");
+    expect(upstreamRequest).toContain("wget -S -q -O /dev/null");
+    expect(upstreamRequest).not.toContain("|| true");
+    expect(gate).toContain("?probe=body-$slot");
+    expect(gate).toContain('docker logs "$upstream"');
+    expect(gate).toContain("upstream request was not observed");
     expect(gate).toContain("413 Request Entity Too Large");
     expect(gate).toContain("403 Forbidden");
     expect(read(".github/workflows/ci.yml")).toMatch(/\n\s+- gate: nginx\n/u);
@@ -5703,8 +5715,8 @@ exit 0
     expect(script).toContain("--env-file");
     expect(script).not.toMatch(/docker run[^\n]*-e\s+POSTGRES_/u);
     expect(script).not.toContain("POSTGRES_PASSWORD=");
-    expect(script).toContain('expected_migrations="12"');
-    expect(script).toContain('expected_latest_migration="1786858709269"');
+    expect(script).toContain('expected_migrations="14"');
+    expect(script).toContain('expected_latest_migration="1787035814149"');
     expect(script).toContain("migration_count");
     expect(script).toContain("latest_migration");
     expect(script).toContain("users_email_lower_unique");
@@ -7647,13 +7659,14 @@ case "$command" in
         [ "$FAKE_DOCKER_MODE" = success_temp_rm_failure ] || exit 1
         case " $* " in
           *"BEGIN TRANSACTION READ ONLY"*) printf '%s\n' '1|1|1|1|1|1|0|0|0|t' ;;
-          *"SELECT count(*) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 12 ;;
-          *"SELECT max(created_at) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 1786858709269 ;;
+          *"SELECT count(*) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 14 ;;
+          *"SELECT max(created_at) FROM drizzle.__drizzle_migrations"*) printf '%s\n' 1787035814149 ;;
           *"WHERE id = "*) printf '%s\n' 1 ;;
           *"WHERE session_id = "*) printf '%s\n' 1 ;;
           *"SELECT count(*) FROM public.users"*) printf '%s\n' 1 ;;
           *"SELECT count(*) FROM agno.agno_sessions"*) printf '%s\n' 1 ;;
           *"SELECT count(*) FROM agno.agno_schema_versions"*) printf '%s\n' 1 ;;
+          *"SELECT artifact.slot"*) : ;;
           *"SELECT artifact_key"*) : ;;
           *"to_regclass('public.users')"*) printf '%s\n' t ;;
           *) exit 1 ;;
@@ -9712,7 +9725,7 @@ IFS= read -r blocked <"$CAPTURE_DIR/pg-dump-block.fifo"
     expect(script).toContain(
       "blocked download mutation changed protected state",
     );
-    expect(script).toContain("download_artifacts=6");
+    expect(script).toContain("download_artifacts=8");
     expect(script).toContain("cleanup_pending_at");
     expect(script).toContain("download-resources/staging");
   });

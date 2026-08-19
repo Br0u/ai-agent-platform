@@ -4,11 +4,11 @@ import { headers } from "next/headers";
 
 import { resolveTrustedRequestIp } from "../auth/shared-options";
 import {
-  createDefaultDownloadResourceActions,
-  type DownloadResourceActionState,
+  createDefaultTypedDownloadResourceActions,
+  type TypedDownloadResourceActionState,
 } from "./actions";
 
-async function actions() {
+async function typedActions() {
   const requestHeaders = await headers();
   const ipAddress = resolveTrustedRequestIp(requestHeaders);
   const userAgent = requestHeaders
@@ -16,50 +16,68 @@ async function actions() {
     ?.replace(/[\u0000-\u001f\u007f]/gu, "")
     .trim()
     .slice(0, 512);
-  return createDefaultDownloadResourceActions({
+  return createDefaultTypedDownloadResourceActions({
     ...(ipAddress ? { ipAddress } : {}),
     ...(userAgent ? { userAgent } : {}),
   });
 }
 
-export async function createDownloadResourceAction(
-  previous: DownloadResourceActionState,
+export async function createTypedDownloadResourceAction(
+  previous: TypedDownloadResourceActionState,
   formData: FormData,
 ) {
-  return (await actions()).createDownloadResourceAction(previous, formData);
+  return (await typedActions()).createTypedDownloadResourceAction(
+    previous,
+    formData,
+  );
 }
 
-export async function saveDownloadDraftAction(
-  previous: DownloadResourceActionState,
+export async function saveTypedDownloadDraftAction(
+  previous: TypedDownloadResourceActionState,
   formData: FormData,
 ) {
-  return (await actions()).saveDownloadDraftAction(previous, formData);
+  return (await typedActions()).saveTypedDownloadDraftAction(
+    previous,
+    formData,
+  );
 }
 
-export async function publishDownloadResourceAction(
-  previous: DownloadResourceActionState,
+export async function publishTypedDownloadResourceAction(
+  previous: TypedDownloadResourceActionState,
   formData: FormData,
 ) {
-  return (await actions()).publishDownloadResourceAction(previous, formData);
+  return (await typedActions()).publishTypedDownloadResourceAction(
+    previous,
+    formData,
+  );
 }
 
-export async function downlineDownloadResourceAction(
-  previous: DownloadResourceActionState,
+export async function downlineTypedDownloadResourceAction(
+  previous: TypedDownloadResourceActionState,
   formData: FormData,
 ) {
-  return (await actions()).downlineDownloadResourceAction(previous, formData);
+  return (await typedActions()).downlineTypedDownloadResourceAction(
+    previous,
+    formData,
+  );
 }
 
-export async function discardDownloadDraftAction(
-  previous: DownloadResourceActionState,
+export async function discardTypedDownloadDraftAction(
+  previous: TypedDownloadResourceActionState,
   formData: FormData,
 ) {
-  return (await actions()).discardDownloadDraftAction(previous, formData);
+  return (await typedActions()).discardTypedDownloadDraftAction(
+    previous,
+    formData,
+  );
 }
 
-export async function removeDownloadDraftFileAction(
-  previous: DownloadResourceActionState,
+export async function removeDownloadDraftArtifactAction(
+  previous: TypedDownloadResourceActionState,
   formData: FormData,
 ) {
-  return (await actions()).removeDownloadDraftFileAction(previous, formData);
+  return (await typedActions()).removeDownloadDraftArtifactAction(
+    previous,
+    formData,
+  );
 }

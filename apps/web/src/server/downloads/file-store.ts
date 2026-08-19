@@ -12,18 +12,30 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { ARTIFACT_FILE_TYPES, type ArtifactSlot } from "./artifact-file";
+
 const DIRECTORY_MODE = 0o750;
 const FILE_MODE = 0o640;
 const UUID_SEGMENT =
   "[0-9a-f]{8}-[0-9a-f]{4}-[1-57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const UUID = new RegExp(`^${UUID_SEGMENT}$`, "u");
-const OBJECT_KEY = new RegExp(
+const DOCUMENT_OBJECT_KEY = new RegExp(
   `^objects/(${UUID_SEGMENT})/(${UUID_SEGMENT})\\.(pdf|webp)$`,
   "u",
 );
+const SOFTWARE_OBJECT_KEY = new RegExp(
+  `^objects/(${UUID_SEGMENT})/(${UUID_SEGMENT})-(windows|macos)\\.(exe|msi|zip|dmg|pkg)$`,
+  "u",
+);
 
-export type DownloadArtifactKind = "pdf" | "cover";
-export type DownloadStageExtension = ".pdf" | ".webp";
+export type DownloadStageExtension =
+  | ".pdf"
+  | ".webp"
+  | ".exe"
+  | ".msi"
+  | ".zip"
+  | ".dmg"
+  | ".pkg";
 export type DownloadStage = Readonly<{
   path: string;
   writable: FileHandle;
@@ -34,10 +46,11 @@ type StageState = {
   extension: DownloadStageExtension;
 };
 
-type CommitInput = Readonly<{
+export type CommitArtifactInput = Readonly<{
   resourceId: string;
   revisionId: string;
-  kind: DownloadArtifactKind;
+  slot: ArtifactSlot;
+  extension: DownloadStageExtension;
 }>;
 
 type ByteRange = Readonly<{ start: number; end: number }>;
@@ -50,10 +63,32 @@ function validateUuid(value: string, label: string) {
   if (!UUID.test(value)) throw new Error(`Invalid ${label} ID`);
 }
 
-function extensionFor(kind: DownloadArtifactKind) {
-  if (kind === "pdf") return ".pdf";
-  if (kind === "cover") return ".webp";
-  throw new Error("Invalid artifact kind");
+function isRecognizedExtension(
+  slot: ArtifactSlot,
+  extension: DownloadStageExtension,
+) {
+  return Object.hasOwn(ARTIFACT_FILE_TYPES[slot], extension);
+}
+
+function isSlotExtension(
+  slot: ArtifactSlot,
+  extension: DownloadStageExtension,
+) {
+  return (
+    (slot === "document" && extension === ".webp") ||
+    isRecognizedExtension(slot, extension)
+  );
+}
+
+function isStageExtension(
+  extension: string,
+): extension is DownloadStageExtension {
+  return (
+    extension === ".webp" ||
+    Object.hasOwn(ARTIFACT_FILE_TYPES.document, extension) ||
+    Object.hasOwn(ARTIFACT_FILE_TYPES.windows, extension) ||
+    Object.hasOwn(ARTIFACT_FILE_TYPES.macos, extension)
+  );
 }
 
 async function safeDirectory(directory: string, create: boolean) {
@@ -122,14 +157,31 @@ export function createDownloadFileStore(configuredRoot?: string) {
   }
 
   function parseObjectKey(objectKey: string) {
-    const match = OBJECT_KEY.exec(objectKey);
-    if (!match) throw new Error("Invalid object key");
-    return {
-      resourceId: match[1]!,
-      revisionId: match[2]!,
-      extension: `.${match[3]}` as DownloadStageExtension,
-      path: path.join(root(), objectKey),
-    };
+    const document = DOCUMENT_OBJECT_KEY.exec(objectKey);
+    if (document) {
+      return {
+        resourceId: document[1]!,
+        revisionId: document[2]!,
+        extension: `.${document[3]}` as DownloadStageExtension,
+        path: path.join(root(), objectKey),
+      };
+    }
+    const software = SOFTWARE_OBJECT_KEY.exec(objectKey);
+    if (
+      software &&
+      isRecognizedExtension(
+        software[3] as ArtifactSlot,
+        `.${software[4]}` as DownloadStageExtension,
+      )
+    ) {
+      return {
+        resourceId: software[1]!,
+        revisionId: software[2]!,
+        extension: `.${software[4]}` as DownloadStageExtension,
+        path: path.join(root(), objectKey),
+      };
+    }
+    throw new Error("Invalid object key");
   }
 
   async function regularObject(objectKey: string) {
@@ -178,9 +230,138 @@ export function createDownloadFileStore(configuredRoot?: string) {
     throw originalError;
   }
 
+  function takeStage(stage: DownloadStage) {
+    const state = stages.get(stage);
+    if (!state || state.consumed) throw new Error("Invalid or consumed stage");
+    state.consumed = true;
+    return state;
+  }
+
+  async function commitStage(
+    stage: DownloadStage,
+    state: StageState,
+    resourceId: string,
+    revisionId: string,
+    extension: DownloadStageExtension,
+    objectName: string,
+  ) {
+    let linked:
+      | {
+          destination: string;
+          handleStats: Awaited<ReturnType<FileHandle["stat"]>>;
+          objectKey: string;
+        }
+      | undefined;
+    try {
+      validateUuid(resourceId, "resource");
+      validateUuid(revisionId, "revision");
+      if (state.extension !== extension) {
+        throw new Error("Stage extension does not match artifact kind");
+      }
+
+      const stagedStats = await lstat(stage.path);
+      if (stagedStats.isSymbolicLink() || !stagedStats.isFile()) {
+        throw new Error("Stage must be a regular file");
+      }
+      const handleStats = await stage.writable.stat();
+      if (
+        stagedStats.dev !== handleStats.dev ||
+        stagedStats.ino !== handleStats.ino
+      ) {
+        throw new Error("Stage file changed before commit");
+      }
+
+      await stage.writable.chmod(FILE_MODE);
+      const securedStats = await lstat(stage.path);
+      if (
+        securedStats.isSymbolicLink() ||
+        !securedStats.isFile() ||
+        securedStats.dev !== handleStats.dev ||
+        securedStats.ino !== handleStats.ino
+      ) {
+        throw new Error("Stage file changed before commit");
+      }
+      const parent = await ensureObjectParent(resourceId, true);
+      const objectKey = `objects/${resourceId}/${objectName}`;
+      const destination = path.join(parent, objectName);
+      await link(stage.path, destination);
+      linked = { destination, handleStats, objectKey };
+    } catch (error) {
+      return discardAndThrow(stage, error);
+    }
+    if (!linked) throw new Error("Artifact link state missing");
+
+    const publishedStats = await lstat(linked.destination).catch(
+      () => undefined,
+    );
+    if (
+      !publishedStats ||
+      publishedStats.isSymbolicLink() ||
+      !publishedStats.isFile() ||
+      publishedStats.dev !== linked.handleStats.dev ||
+      publishedStats.ino !== linked.handleStats.ino
+    ) {
+      const changed = new Error("Stage file changed before commit");
+      try {
+        await unlinkIfPresent(linked.destination);
+      } catch (rollbackError) {
+        let closeError: unknown;
+        try {
+          await stage.writable.close();
+        } catch (error) {
+          closeError = error;
+        }
+        throw new AggregateError(
+          [changed, rollbackError, closeError].filter(
+            (error) => error !== undefined,
+          ),
+          "Artifact commit rollback failed; recoverable links retained",
+        );
+      }
+      return discardAndThrow(stage, changed);
+    }
+
+    try {
+      await stage.writable.close();
+    } catch (closeError) {
+      try {
+        await unlinkIfPresent(linked.destination);
+      } catch (rollbackError) {
+        let retryCloseError: unknown;
+        try {
+          await stage.writable.close();
+        } catch (error) {
+          retryCloseError = error;
+        }
+        throw new AggregateError(
+          [closeError, rollbackError, retryCloseError].filter(
+            (error) => error !== undefined,
+          ),
+          "Artifact commit rollback failed; recoverable links retained",
+        );
+      }
+      return discardAndThrow(stage, closeError);
+    }
+
+    try {
+      await unlink(stage.path);
+    } catch (sourceError) {
+      try {
+        await unlinkIfPresent(linked.destination);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [sourceError, rollbackError],
+          "Artifact commit rollback failed; recoverable links retained",
+        );
+      }
+      throw sourceError;
+    }
+    return linked.objectKey;
+  }
+
   return {
     async createStage(extension: DownloadStageExtension) {
-      if (extension !== ".pdf" && extension !== ".webp") {
+      if (!isStageExtension(extension)) {
         throw new Error("Invalid stage extension");
       }
       await ensureRoot(true);
@@ -200,132 +381,48 @@ export function createDownloadFileStore(configuredRoot?: string) {
       return stage;
     },
 
-    async commit(stage: DownloadStage, input: CommitInput) {
-      const state = stages.get(stage);
-      if (!state || state.consumed)
-        throw new Error("Invalid or consumed stage");
-      state.consumed = true;
-
-      let linked:
-        | {
-            destination: string;
-            handleStats: Awaited<ReturnType<FileHandle["stat"]>>;
-            objectKey: string;
-          }
-        | undefined;
+    async commitArtifact(stage: DownloadStage, input: CommitArtifactInput) {
+      const state = takeStage(stage);
       try {
         validateUuid(input.resourceId, "resource");
         validateUuid(input.revisionId, "revision");
-        const extension = extensionFor(input.kind);
-        if (state.extension !== extension) {
-          throw new Error("Stage extension does not match artifact kind");
-        }
-
-        const stagedStats = await lstat(stage.path);
-        if (stagedStats.isSymbolicLink() || !stagedStats.isFile()) {
-          throw new Error("Stage must be a regular file");
-        }
-        const handleStats = await stage.writable.stat();
         if (
-          stagedStats.dev !== handleStats.dev ||
-          stagedStats.ino !== handleStats.ino
+          state.extension !== input.extension ||
+          !isSlotExtension(input.slot, input.extension)
         ) {
-          throw new Error("Stage file changed before commit");
+          throw new Error("Stage extension does not match artifact slot");
         }
-
-        await stage.writable.chmod(FILE_MODE);
-        const securedStats = await lstat(stage.path);
-        if (
-          securedStats.isSymbolicLink() ||
-          !securedStats.isFile() ||
-          securedStats.dev !== handleStats.dev ||
-          securedStats.ino !== handleStats.ino
-        ) {
-          throw new Error("Stage file changed before commit");
-        }
-        const parent = await ensureObjectParent(input.resourceId, true);
-        const objectKey = `objects/${input.resourceId}/${input.revisionId}${extension}`;
-        const destination = path.join(
-          parent,
-          `${input.revisionId}${extension}`,
-        );
-        await link(stage.path, destination);
-        linked = { destination, handleStats, objectKey };
       } catch (error) {
         return discardAndThrow(stage, error);
       }
-      if (!linked) throw new Error("Artifact link state missing");
-
-      const publishedStats = await lstat(linked.destination).catch(
-        () => undefined,
+      return await commitStage(
+        stage,
+        state,
+        input.resourceId,
+        input.revisionId,
+        input.extension,
+        input.slot === "document"
+          ? `${input.revisionId}${input.extension}`
+          : `${input.revisionId}-${input.slot}${input.extension}`,
       );
-      if (
-        !publishedStats ||
-        publishedStats.isSymbolicLink() ||
-        !publishedStats.isFile() ||
-        publishedStats.dev !== linked.handleStats.dev ||
-        publishedStats.ino !== linked.handleStats.ino
-      ) {
-        const changed = new Error("Stage file changed before commit");
-        try {
-          await unlinkIfPresent(linked.destination);
-        } catch (rollbackError) {
-          let closeError: unknown;
-          try {
-            await stage.writable.close();
-          } catch (error) {
-            closeError = error;
-          }
-          throw new AggregateError(
-            [changed, rollbackError, closeError].filter(
-              (error) => error !== undefined,
-            ),
-            "Artifact commit rollback failed; recoverable links retained",
-          );
-        }
-        return discardAndThrow(stage, changed);
-      }
-
-      try {
-        await stage.writable.close();
-      } catch (closeError) {
-        try {
-          await unlinkIfPresent(linked.destination);
-        } catch (rollbackError) {
-          let retryCloseError: unknown;
-          try {
-            await stage.writable.close();
-          } catch (error) {
-            retryCloseError = error;
-          }
-          throw new AggregateError(
-            [closeError, rollbackError, retryCloseError].filter(
-              (error) => error !== undefined,
-            ),
-            "Artifact commit rollback failed; recoverable links retained",
-          );
-        }
-        return discardAndThrow(stage, closeError);
-      }
-
-      try {
-        await unlink(stage.path);
-      } catch (sourceError) {
-        try {
-          await unlinkIfPresent(linked.destination);
-        } catch (rollbackError) {
-          throw new AggregateError(
-            [sourceError, rollbackError],
-            "Artifact commit rollback failed; recoverable links retained",
-          );
-        }
-        throw sourceError;
-      }
-      return linked.objectKey;
     },
 
     async stat(objectKey: string) {
       return (await regularObject(objectKey)).stats;
+    },
+
+    async inspect(objectKey: string, expectedByteSize?: number) {
+      if (
+        expectedByteSize !== undefined &&
+        (!Number.isSafeInteger(expectedByteSize) || expectedByteSize < 0)
+      ) {
+        throw new Error("Invalid expected byte size");
+      }
+      const stats = (await regularObject(objectKey)).stats;
+      if (expectedByteSize !== undefined && stats.size !== expectedByteSize) {
+        throw new Error("Artifact byte size mismatch");
+      }
+      return stats;
     },
 
     async open(objectKey: string, range?: ByteRange) {

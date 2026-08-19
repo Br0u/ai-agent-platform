@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { filterPublicEntries } from "../config/public-entry-policy";
 import { homeContent } from "./home-content";
 import { HomeIcon } from "./home-icon";
 import "./home.css";
@@ -45,7 +46,7 @@ export function HomeHero() {
           </h1>
           <p className="home-lead home-hero__lead">{homeContent.hero.lead}</p>
           <div className="home-actions">
-            {homeContent.hero.actions.map((action) => (
+            {filterPublicEntries(homeContent.hero.actions).map((action) => (
               <Link
                 className={actionClass(action.variant)}
                 href={action.href}
@@ -226,15 +227,17 @@ export function HomeContactSection() {
           <div className="home-contact__copy">
             <p>{homeContent.contact.description}</p>
             <div className="home-actions">
-              {homeContent.contact.actions.map((action) => (
-                <Link
-                  className={actionClass(action.variant)}
-                  href={action.href}
-                  key={action.href}
-                >
-                  {action.label}
-                </Link>
-              ))}
+              {filterPublicEntries(homeContent.contact.actions).map(
+                (action) => (
+                  <Link
+                    className={actionClass(action.variant)}
+                    href={action.href}
+                    key={action.href}
+                  >
+                    {action.label}
+                  </Link>
+                ),
+              )}
             </div>
             <p className="home-context-note">{homeContent.contact.note}</p>
           </div>

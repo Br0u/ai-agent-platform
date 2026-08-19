@@ -1,12 +1,16 @@
 import Link from "next/link";
 
 import { standaloneCenter, type PortalAction } from "./product-portal-content";
+import { filterPublicEntries } from "../config/public-entry-policy";
 import "./product-portal.css";
 
 function Actions({ actions }: { actions: readonly PortalAction[] }) {
+  const publicActions = filterPublicEntries(actions);
+  if (publicActions.length === 0) return null;
+
   return (
     <div className="product-portal-actions">
-      {actions.map((action) => (
+      {publicActions.map((action) => (
         <Link
           className={
             action.variant === "primary"

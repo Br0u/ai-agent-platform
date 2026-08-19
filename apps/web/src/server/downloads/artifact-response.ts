@@ -8,6 +8,32 @@ export type OpenedDownloadArtifact = Readonly<{
   end: number;
 }>;
 
+export type ArtifactContentType =
+  | "application/pdf"
+  | "image/webp"
+  | "application/vnd.microsoft.portable-executable"
+  | "application/x-msi"
+  | "application/zip"
+  | "application/x-apple-diskimage"
+  | "application/vnd.apple.installer+xml";
+
+type ArtifactResponseInput = Readonly<{
+  request: Request;
+  artifact: OpenedDownloadArtifact;
+  filename: string;
+  disposition?: "inline" | "attachment";
+}> &
+  (
+    | Readonly<{
+        contentType: "image/webp";
+        expectedByteSize?: never;
+      }>
+    | Readonly<{
+        contentType: Exclude<ArtifactContentType, "image/webp">;
+        expectedByteSize: number;
+      }>
+  );
+
 const NO_STORE = "no-store";
 
 export function parseSingleByteRange(
@@ -34,8 +60,8 @@ export function parseSingleByteRange(
 }
 
 function contentDisposition(
-  disposition: "inline" | "attachment",
   filename: string,
+  disposition: "inline" | "attachment",
 ) {
   const fallback =
     filename
@@ -53,7 +79,7 @@ export function artifactErrorResponse(
   request: Request,
   status: number,
   code: string,
-): Response {
+) {
   const candidate = request.headers.get("x-request-id");
   const requestId =
     candidate !== null && /^[A-Za-z0-9_-]{1,128}$/u.test(candidate)
@@ -61,18 +87,24 @@ export function artifactErrorResponse(
       : randomUUID();
   return Response.json(
     { version: "1", requestId, error: { code } },
-    { status, headers: { "Cache-Control": NO_STORE } },
+    {
+      status,
+      headers: {
+        "Cache-Control": NO_STORE,
+        "X-Content-Type-Options": "nosniff",
+      },
+    },
   );
 }
 
-export function artifactResponse(input: {
-  request: Request;
-  artifact: OpenedDownloadArtifact;
-  contentType: "application/pdf" | "image/webp";
-  filename: string;
-  disposition: "inline" | "attachment";
-  noStore?: boolean;
-}): Response {
+export function artifactResponse(input: ArtifactResponseInput): Response {
+  if (
+    "expectedByteSize" in input &&
+    input.artifact.size !== input.expectedByteSize
+  ) {
+    input.artifact.readable.destroy();
+    return artifactErrorResponse(input.request, 500, "internal_error");
+  }
   const parsed = parseSingleByteRange(
     input.request.method === "GET" ? input.request.headers.get("range") : null,
     input.artifact.size,
@@ -83,9 +115,9 @@ export function artifactResponse(input: {
       status: 416,
       headers: {
         "Accept-Ranges": "bytes",
+        "Cache-Control": NO_STORE,
         "Content-Range": `bytes */${input.artifact.size}`,
         "X-Content-Type-Options": "nosniff",
-        ...(input.noStore ? { "Cache-Control": NO_STORE } : {}),
       },
     });
   }
@@ -106,14 +138,14 @@ export function artifactResponse(input: {
   }
   const headers = new Headers({
     "Accept-Ranges": "bytes",
+    "Cache-Control": NO_STORE,
     "Content-Disposition": contentDisposition(
-      input.disposition,
       input.filename,
+      input.disposition ?? "attachment",
     ),
     "Content-Length": String(end - start + 1),
     "Content-Type": input.contentType,
     "X-Content-Type-Options": "nosniff",
-    ...(input.noStore ? { "Cache-Control": NO_STORE } : {}),
   });
   if (partial)
     headers.set(
@@ -126,9 +158,6 @@ export function artifactResponse(input: {
   }
   return new Response(
     Readable.toWeb(input.artifact.readable) as ReadableStream,
-    {
-      status: partial ? 206 : 200,
-      headers,
-    },
+    { status: partial ? 206 : 200, headers },
   );
 }

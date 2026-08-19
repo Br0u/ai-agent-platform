@@ -82,7 +82,9 @@ async function scrollWithinOnePixelOfBottom(page: Page) {
   }, 0.5);
 }
 
-test("downloads 执行完整内容、筛选和原型下载确认合同", async ({ page }) => {
+test("downloads 执行完整内容、筛选且默认不显示无附件客户端", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await gotoDownloads(page);
 
@@ -92,7 +94,10 @@ test("downloads 执行完整内容、筛选和原型下载确认合同", async (
       name: "从产品资料到安装体验，一站式获取华鲲资源",
     }),
   ).toHaveCount(1);
-  await expect(page.locator("[data-download-key]")).toHaveCount(22);
+  await expect(page.locator("[data-download-key]")).toHaveCount(21);
+  await expect(page.locator('[data-download-key="mdd2-client"]')).toHaveCount(
+    0,
+  );
   for (const anchor of [
     "dl-materials",
     "dl-software",
@@ -134,68 +139,9 @@ test("downloads 执行完整内容、筛选和原型下载确认合同", async (
     "「元启·全栈解决方案」下载：原型阶段暂不提供真实文件，正式版上线后开放",
   );
 
-  const softwareTrigger = page.getByRole("button", {
-    name: "下载安装码里奥 桌面客户端",
-  });
-  await softwareTrigger.click();
-  const dialog = page.getByRole("dialog", { name: "确认下载安装包" });
-  const close = dialog.getByRole("button", { name: "关闭" });
-  const headerLink = page.locator(".site-header a").first();
-  const routeTransition = page.locator(".site-route-transition");
-  await expect
-    .poll(() =>
-      routeTransition.evaluate(
-        (element) => getComputedStyle(element).willChange,
-      ),
-    )
-    .toBe("auto");
-  const dialogBackdropBox = await page
-    .locator(".download-dialog-backdrop")
-    .boundingBox();
-  expect.soft(dialogBackdropBox?.y).toBe(0);
-  const softwareUrl = page.url();
-  const softwareHeaderBox = await headerLink.boundingBox();
-  expect(softwareHeaderBox).not.toBeNull();
-  await page.mouse.click(
-    softwareHeaderBox!.x + softwareHeaderBox!.width / 2,
-    softwareHeaderBox!.y + softwareHeaderBox!.height / 2,
-  );
-  await expect.soft(page).toHaveURL(softwareUrl);
-  await expect.soft(dialog).toHaveCount(1);
-  await headerLink.focus();
-  await expect.soft(close).toBeFocused();
-  const launcher = page.getByRole("button", { name: "打开码多多" });
-  await launcher.focus();
-  await expect.soft(close).toBeFocused();
-  const launcherBox = await launcher.boundingBox();
-  expect(launcherBox).not.toBeNull();
-  await page.mouse.click(
-    launcherBox!.x + launcherBox!.width / 2,
-    launcherBox!.y + launcherBox!.height / 2,
-  );
-  await expect.soft(dialog).toHaveCount(1);
-  await expect.soft(page.locator(".floating-assistant__panel")).toHaveCount(0);
-  const confirm = dialog.getByRole("button", { name: "确认下载" });
-  await expect(confirm).toBeDisabled();
-  await dialog
-    .getByRole("checkbox", {
-      name: "我已了解该版本的适用环境和使用说明",
-    })
-    .check();
-  await expect(confirm).toBeEnabled();
-  await confirm.click();
-  await expect(dialog).toHaveCount(0);
-  await expect(softwareTrigger).toBeFocused();
-  await expect
-    .poll(() =>
-      routeTransition.evaluate(
-        (element) => getComputedStyle(element).willChange,
-      ),
-    )
-    .toBe("opacity, transform");
-  await expect(page.locator(".download-toast")).toHaveText(
-    "已创建下载任务：原型阶段不实际下载，正式版提供安装包",
-  );
+  await expect(
+    page.getByRole("dialog", { name: "确认下载安装包" }),
+  ).toHaveCount(0);
 });
 
 test("downloads 沿用产品页 Navbar、侧栏与备案页脚", async ({ page }) => {

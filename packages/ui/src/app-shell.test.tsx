@@ -119,6 +119,7 @@ type RenderShellOptions = {
   grantedPermissions?: readonly string[];
   logoutAction?: () => Promise<void>;
   portalLinkComponent?: NavigationLinkComponent;
+  trialEntryVisible?: boolean;
 };
 
 function renderShell(
@@ -132,6 +133,7 @@ function renderShell(
     grantedPermissions,
     logoutAction,
     portalLinkComponent,
+    trialEntryVisible,
   }: RenderShellOptions = {},
 ) {
   return render(
@@ -148,6 +150,7 @@ function renderShell(
       logoutAction={logoutAction}
       portalNavigation={portalNavigation}
       portalLinkComponent={portalLinkComponent}
+      trialEntryVisible={trialEntryVisible}
       variant={variant}
     >
       <p>页面内容</p>
@@ -158,6 +161,27 @@ function renderShell(
 afterEach(cleanup);
 
 describe("AppShell", () => {
+  it("hides the trial entry by default", () => {
+    renderShell("portal");
+
+    expect(screen.queryByRole("link", { name: "申请体验" })).toBeNull();
+  });
+
+  it("keeps desktop and mobile trial actions aligned when explicitly visible", () => {
+    renderShell("portal", { trialEntryVisible: true });
+
+    expect(screen.getByRole("link", { name: "申请体验" })).toHaveAttribute(
+      "href",
+      "/trial",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "打开导航" }));
+    expect(
+      within(screen.getByRole("dialog", { name: "全站导航" })).getByRole(
+        "link",
+        { name: "申请体验" },
+      ),
+    ).toHaveAttribute("href", "/trial");
+  });
   it("forwards the assistant entry to portal chrome only", () => {
     const assistantEntry = <button type="button">打开工作区助理</button>;
     const { rerender } = renderShell("portal", { assistantEntry });

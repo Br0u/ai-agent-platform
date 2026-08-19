@@ -3,6 +3,7 @@ import Image from "next/image";
 import { notFound } from "next/navigation";
 
 import { getPlatformCenter } from "./platform-center-content";
+import { filterPublicEntries } from "../config/public-entry-policy";
 import type {
   PlatformDemo,
   PlatformImage,
@@ -18,11 +19,12 @@ function Actions({
   actions: readonly PortalAction[];
   testId?: string;
 }) {
-  if (actions.length === 0) return null;
+  const publicActions = filterPublicEntries(actions);
+  if (publicActions.length === 0) return null;
 
   return (
     <div className="product-portal-actions">
-      {actions.map((action) => (
+      {publicActions.map((action) => (
         <Link
           className={
             action.variant === "primary"

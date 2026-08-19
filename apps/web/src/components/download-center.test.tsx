@@ -11,14 +11,24 @@ import type { DownloadResourcePublicDto } from "@/server/downloads/contracts";
 import DownloadsPage, { dynamic, revalidate } from "../app/downloads/page";
 import { DownloadCenter } from "./download-center";
 
+type DocumentResource = Extract<
+  DownloadResourcePublicDto,
+  { kind: "document" }
+>;
+type SoftwareResource = Extract<
+  DownloadResourcePublicDto,
+  { kind: "software" }
+>;
+
 const mocks = vi.hoisted(() => ({ listPublicResources: vi.fn() }));
 
 vi.mock("@/server/downloads/service", () => ({
   downloadResourceService: { listPublicResources: mocks.listPublicResources },
 }));
 
-const resources: DownloadResourcePublicDto[] = [
+const resources: DocumentResource[] = [
   {
+    kind: "document",
     key: "yuanqi-brochure",
     name: "元启产品彩页",
     product: "元启",
@@ -35,6 +45,7 @@ const resources: DownloadResourcePublicDto[] = [
     updatedAt: "2026-08-16T01:02:03.000Z",
   },
   {
+    kind: "document",
     key: "mdd2-intro",
     name: "码里奥产品介绍",
     product: "码里奥",
@@ -51,6 +62,7 @@ const resources: DownloadResourcePublicDto[] = [
     updatedAt: "2026-08-15T01:02:03.000Z",
   },
   {
+    kind: "document",
     key: "vision-whitepaper",
     name: "视觉检索技术白皮书",
     product: "视觉检索智能体",
@@ -67,6 +79,39 @@ const resources: DownloadResourcePublicDto[] = [
     updatedAt: "2026-08-14T01:02:03.000Z",
   },
 ];
+
+const desktopClient: SoftwareResource = {
+  kind: "software",
+  key: "mdd2-client",
+  name: "码里奥桌面客户端",
+  product: "码里奥",
+  category: "software",
+  resourceType: "桌面客户端",
+  description: "企业级智能编码客户端",
+  sortOrder: 20,
+  releaseVersion: "v2.0.0",
+  platforms: {
+    windows: {
+      filename: "mario.exe",
+      byteSize: 240_000_000,
+      downloadUrl: "/api/v1/downloads/mdd2-client/download/windows",
+    },
+    macos: null,
+  },
+  updatedAt: "2026-08-18T00:00:00.000Z",
+};
+
+const dualPlatformDesktopClient: SoftwareResource = {
+  ...desktopClient,
+  platforms: {
+    windows: desktopClient.platforms.windows,
+    macos: {
+      filename: "mario.dmg",
+      byteSize: 180_000_000,
+      downloadUrl: "/api/v1/downloads/mdd2-client/download/macos",
+    },
+  },
+};
 
 const twentyResources = Array.from({ length: 20 }, (_, index) => ({
   ...resources[index % resources.length]!,
@@ -168,7 +213,7 @@ describe("managed download center", () => {
     ).toHaveFocus();
   });
 
-  it("restores the original product-to-experience hero", () => {
+  it("removes obsolete hero actions and ends the journey with consultation", () => {
     const { container } = render(<DownloadCenter resources={resources} />);
     const hero = container.querySelector<HTMLElement>("#dl-hero")!;
 
@@ -182,9 +227,8 @@ describe("managed download center", () => {
       "下载中心集中提供元启平台、码里奥与行业应用的产品资料、软件安装包、部署文档与技术白皮书，帮助您了解产品能力、获取资源并进入产品体验。",
     );
     expect(hero.querySelectorAll(".download-journey__step")).toHaveLength(4);
-    expect(
-      within(hero).getAllByRole("link", { name: "了解产品" })[0],
-    ).toHaveAttribute("href", "/product");
+    expect(hero.querySelector(".download-hero__actions")).toBeNull();
+    expect(within(hero).queryByRole("link", { name: "申请体验" })).toBeNull();
     expect(
       within(hero).getByRole("link", { name: "获取资料" }),
     ).toHaveAttribute("href", "/downloads#dl-materials");
@@ -192,11 +236,114 @@ describe("managed download center", () => {
       within(hero).getByRole("link", { name: "安装体验" }),
     ).toHaveAttribute("href", "/downloads#dl-software");
     expect(
-      within(hero).getAllByRole("link", { name: "申请体验" })[0],
-    ).toHaveAttribute("href", "/trial");
+      within(hero).getByRole("link", { name: "联系我们" }),
+    ).toHaveAttribute("href", "/contact?topic=下载与资料咨询");
     expect(hero).toHaveTextContent(
       "下载中心是产品推广与客户转化链路的资源入口，资源均与产品价值关联呈现。",
     );
+    expect(screen.getByText("从产品认知到联系我们申请体验")).toBeVisible();
+  });
+
+  it("renders one desktop client release with direct platform downloads", () => {
+    render(<DownloadCenter resources={[...resources, desktopClient]} />);
+
+    const client = card("码里奥桌面客户端");
+    expect(client).toHaveTextContent("v2.0.0");
+    expect(client).toHaveTextContent("下载安装包 → 安装部署 → 进入使用");
+    expect(client).not.toHaveTextContent("阅读部署文档");
+    expect(
+      within(client).getByRole("link", { name: "下载 Windows 安装包" }),
+    ).toHaveAttribute("href", "/api/v1/downloads/mdd2-client/download/windows");
+    expect(within(client).getAllByText("暂无资源")).toHaveLength(2);
+    expect(
+      within(client).queryByRole("link", { name: "下载 macOS 安装包" }),
+    ).toBeNull();
+  });
+
+  it("keeps the desktop cover bounded and leaves installer controls in the main body", () => {
+    render(<DownloadCenter resources={[desktopClient]} />);
+
+    const client = card("码里奥桌面客户端");
+    const rightColumn = client.querySelector<HTMLElement>(
+      ":scope > .download-card__cover",
+    );
+    const mainBody = client.querySelector<HTMLElement>(
+      ":scope > .download-card__body",
+    );
+    expect(rightColumn).not.toBeNull();
+    expect(mainBody).not.toBeNull();
+    expect(rightColumn).toHaveTextContent("桌面客户端安装包");
+    expect(rightColumn?.querySelector("a, button, .download-empty")).toBeNull();
+    expect(
+      within(mainBody!).getByText("下载安装包 → 安装部署 → 进入使用"),
+    ).toBeVisible();
+    expect(
+      within(mainBody!).getByRole("link", { name: "下载 Windows 安装包" }),
+    ).toBeVisible();
+  });
+
+  it("keeps narrow-mobile controls after the identity body, outside the clipped cover", () => {
+    const css = readFileSync("src/app/downloads/downloads.css", "utf8");
+    render(<DownloadCenter resources={[desktopClient]} />);
+
+    const client = card("码里奥桌面客户端");
+    const cover = client.querySelector<HTMLElement>(
+      ":scope > .download-card__cover",
+    );
+    const body = client.querySelector<HTMLElement>(
+      ":scope > .download-card__body",
+    );
+    expect(
+      within(body!).getByRole("heading", { name: "码里奥桌面客户端" }),
+    ).toBeVisible();
+    expect(
+      within(body!).getByRole("link", { name: "下载 Windows 安装包" }),
+    ).toBeVisible();
+    expect(cover?.querySelector("a, button, .download-empty")).toBeNull();
+    expect(css).toMatch(
+      /@media \(max-width:\s*640px\)[\s\S]*?\.download-card__cover\s*\{[^}]*aspect-ratio:\s*3\s*\/\s*2;[^}]*grid-row:\s*1;[\s\S]*?\.download-card__body\s*\{[^}]*grid-row:\s*2;/u,
+    );
+  });
+
+  it("shows both installer filenames, sizes, and direct public slot downloads", () => {
+    render(<DownloadCenter resources={[dualPlatformDesktopClient]} />);
+
+    const client = card("码里奥桌面客户端");
+    expect(client).toHaveTextContent("mario.exe · 228.9 MB");
+    expect(client).toHaveTextContent("mario.dmg · 171.7 MB");
+    expect(within(client).queryByText("暂无资源")).toBeNull();
+    expect(
+      within(client).getByRole("link", { name: "下载 Windows 安装包" }),
+    ).toHaveAttribute("href", "/api/v1/downloads/mdd2-client/download/windows");
+    expect(
+      within(client).getByRole("link", { name: "下载 macOS 安装包" }),
+    ).toHaveAttribute("href", "/api/v1/downloads/mdd2-client/download/macos");
+  });
+
+  it("keeps either desktop platform independently downloadable", () => {
+    render(
+      <DownloadCenter
+        resources={[
+          {
+            ...desktopClient,
+            platforms: {
+              windows: null,
+              macos: {
+                filename: "mario.dmg",
+                byteSize: 180_000_000,
+                downloadUrl: "/api/v1/downloads/mdd2-client/download/macos",
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    const client = card("码里奥桌面客户端");
+    expect(within(client).getAllByText("暂无资源")).toHaveLength(2);
+    expect(
+      within(client).getByRole("link", { name: "下载 macOS 安装包" }),
+    ).toHaveAttribute("href", "/api/v1/downloads/mdd2-client/download/macos");
   });
 
   it("uses the solutions-style mobile directory drawer", async () => {

@@ -52,6 +52,14 @@ describe("V2 solution detail", () => {
     expect(screen.queryByAltText("森林火灾预警效果")).not.toBeInTheDocument();
   });
 
+  it("does not render a public trial action", async () => {
+    render(
+      await Page({ params: Promise.resolve({ slug: "finance-compliance" }) }),
+    );
+
+    expect(screen.queryByRole("link", { name: "申请体验" })).toBeNull();
+  });
+
   it("publishes all 29 routes and V2 metadata", async () => {
     expect(generateStaticParams()).toHaveLength(29);
     await expect(

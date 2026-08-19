@@ -206,7 +206,7 @@ export const v2PlatformCenters = [
     cta: {
       title: "需要构建企业级模型工程能力？",
       description:
-        "面向模型资产管理、训练优化、评估验证与部署调度需求，欢迎与华鲲团队沟通并申请试用。",
+        "面向模型资产管理、训练优化、评估验证与部署调度需求，欢迎与华鲲团队沟通并联系我们申请试用。",
       actions: closingActions("模型中心咨询"),
     },
   },
@@ -411,7 +411,7 @@ export const v2PlatformCenters = [
     cta: {
       title: "需要建设企业专属智能体？",
       description:
-        "面向企业知识问答、数据问数、视频理解与流程自动化等建设需求，欢迎与华鲲团队沟通并申请试用。",
+        "面向企业知识问答、数据问数、视频理解与流程自动化等建设需求，欢迎与华鲲团队沟通并联系我们申请试用。",
       actions: closingActions("智能体中心咨询"),
     },
   },
@@ -547,7 +547,7 @@ export const v2PlatformCenters = [
     cta: {
       title: "需要引入业务 AI 应用？",
       description:
-        "面向通用文本写作、投标与合同审查等高频业务场景，欢迎与华鲲团队沟通并申请试用。",
+        "面向通用文本写作、投标与合同审查等高频业务场景，欢迎与华鲲团队沟通并联系我们申请试用。",
       actions: closingActions("行业应用中心咨询"),
     },
   },
@@ -660,7 +660,7 @@ export const v2PlatformCenters = [
     cta: {
       title: "需要沉淀可复用的业务技能？",
       description:
-        "面向编程、应用与办公场景的技能建设与复用需求，欢迎与华鲲团队沟通并申请试用。",
+        "面向编程、应用与办公场景的技能建设与复用需求，欢迎与华鲲团队沟通并联系我们申请试用。",
       actions: closingActions("技能中心咨询"),
     },
   },
@@ -910,7 +910,7 @@ export const v2PlatformCenters = [
     cta: {
       title: "需要企业级平台安全管控？",
       description:
-        "面向平台权限、组织协作与私有化部署需求，欢迎与华鲲团队沟通并申请试用。",
+        "面向平台权限、组织协作与私有化部署需求，欢迎与华鲲团队沟通并联系我们申请试用。",
       actions: closingActions("权限中心咨询"),
     },
   },
