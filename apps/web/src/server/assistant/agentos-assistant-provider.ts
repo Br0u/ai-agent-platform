@@ -315,9 +315,7 @@ function requestedNavigationPath(
   ]
     .filter((link) => {
       const label = link.label.replace(/[\s→›»]+/gu, "");
-      const routeTitle = matchRoute(
-        navigationPathname(link.href),
-      )?.title.replace(/(?:介绍|中心|详情|页面)$/u, "");
+      const routeTitle = matchingRouteTitle(link.href);
       return (
         (label.length >= 2 && compactMessage.includes(label)) ||
         (routeTitle !== undefined &&
@@ -340,10 +338,7 @@ function isConciseGoRequest(
   link: { label: string; href: string },
 ): boolean {
   const label = link.label.replace(/[\s→›»]+/gu, "");
-  const routeTitle = matchRoute(navigationPathname(link.href))?.title.replace(
-    /(?:介绍|中心|详情|页面)$/u,
-    "",
-  );
+  const routeTitle = matchingRouteTitle(link.href);
   return [label, routeTitle].some(
     (destination) =>
       destination !== undefined &&
@@ -351,6 +346,13 @@ function isConciseGoRequest(
         compactMessage.startsWith(`${prefix}${destination}`),
       ),
   );
+}
+
+function matchingRouteTitle(href: string): string | undefined {
+  const route = matchRoute(navigationPathname(href));
+  return route !== undefined && !route.path.includes("[")
+    ? route.title.replace(/(?:介绍|中心|详情|页面)$/u, "")
+    : undefined;
 }
 
 function navigationPathname(href: string): string {
