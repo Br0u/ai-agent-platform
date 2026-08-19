@@ -21,6 +21,14 @@ describe("assistant V2 stream", () => {
       type: "action",
       action: { kind: "navigate", pathname: "/product", label: "查看产品" },
     },
+    {
+      type: "action",
+      action: {
+        kind: "navigate",
+        pathname: "/partners?view=business#pb-modes",
+        label: "合作模式",
+      },
+    },
     { type: "done" },
     {
       type: "error",

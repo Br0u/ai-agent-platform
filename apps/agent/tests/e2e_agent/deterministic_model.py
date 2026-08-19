@@ -15,21 +15,26 @@ from agent_service.model_runtime_types import ManagedModel
 
 INVALID_RESPONSE_SENTINEL = "__aap_e2e_invalid_response__"
 SPLIT_REASONING_SENTINEL = "aap-stateless-question-20260812"
-SPLIT_REASONING_PRIVATE = "aap-private-reasoning-20260812"
 SAFE_ANSWER_SENTINEL = "aap-stateless-answer-20260812"
 ALLOWED_NAVIGATION_SENTINEL = "__aap_e2e_allowed_navigation__"
 FORBIDDEN_NAVIGATION_SENTINEL = "__aap_e2e_forbidden_navigation__"
 PAGE_CONTEXT_SENTINEL = "__aap_e2e_page_context__"
 PRODUCT_PAGE_EXCERPT = "独立产品中心：成熟企业级 AI 产品，独立安装、下载即用"
-FINAL_ANSWER_MARKER = "aap.final.v1:"
+ASSISTANT_CONTEXT_PREFIX = "服务器提供的助手上下文 JSON：\n"
 _close_counts: dict[str, int] = {}
 
 
-def _user_question(message: Message) -> str:
+def public_answer(content: str) -> str:
+    return json.dumps({"answer": content}, ensure_ascii=False, separators=(",", ":"))
+
+
+def _user_context(message: Message) -> tuple[str, dict[str, Any] | None]:
     content = message.get_content_string().replace("\r\n", "\n").replace("\r", "\n")
-    marker = "\n\n用户问题："
-    question = content.partition(marker)[2] if marker in content else content
-    return question.strip()
+    if content.startswith(ASSISTANT_CONTEXT_PREFIX):
+        context = json.loads(content.removeprefix(ASSISTANT_CONTEXT_PREFIX))
+        if isinstance(context, dict) and isinstance(context.get("userQuestion"), str):
+            return context["userQuestion"].strip(), context
+    return content.strip(), None
 
 
 @dataclass
@@ -42,21 +47,20 @@ class DeterministicModel(Model):
 
     def _response(self, messages: list[Message]) -> ModelResponse:
         user_messages = [message for message in messages if message.role == "user"]
-        question = _user_question(user_messages[-1]) if user_messages else ""
+        question, context = (
+            _user_context(user_messages[-1]) if user_messages else ("", None)
+        )
         invalid_question = question == INVALID_RESPONSE_SENTINEL
         if self.id.startswith("e2e-fail-") or invalid_question:
             content = ""
         elif question == SPLIT_REASONING_SENTINEL:
-            content = (
-                f"<THINK data-x>{SPLIT_REASONING_PRIVATE}</THINK>"
-                f"\n{FINAL_ANSWER_MARKER}{SAFE_ANSWER_SENTINEL}"
-            )
+            content = SAFE_ANSWER_SENTINEL
         elif question in {
             ALLOWED_NAVIGATION_SENTINEL,
             FORBIDDEN_NAVIGATION_SENTINEL,
         }:
             if any(message.role == "tool" for message in messages):
-                content = f"{FINAL_ANSWER_MARKER}navigation-suggestion-finished"
+                content = "navigation-suggestion-finished"
             else:
                 pathname = (
                     "/pricing"
@@ -79,19 +83,19 @@ class DeterministicModel(Model):
                     ],
                 )
         elif question == PAGE_CONTEXT_SENTINEL:
-            prompt = user_messages[-1].get_content_string() if user_messages else ""
-            content = FINAL_ANSWER_MARKER + (
+            current_page = context.get("currentPage") if context else None
+            content = (
                 "verified-product-page-context"
-                if PRODUCT_PAGE_EXCERPT in prompt
+                if isinstance(current_page, dict)
+                and PRODUCT_PAGE_EXCERPT in str(current_page.get("text", ""))
                 else "no-public-page-context"
             )
         elif self.id == "e2e-deterministic":
-            content = f"{FINAL_ANSWER_MARKER}deterministic-turn:{len(user_messages)}"
+            content = f"deterministic-turn:{len(user_messages)}"
         else:
-            content = (
-                f"{FINAL_ANSWER_MARKER}deterministic-model:{self.id}:"
-                f"turn:{len(user_messages)}"
-            )
+            content = f"deterministic-model:{self.id}:turn:{len(user_messages)}"
+        if content:
+            content = public_answer(content)
         return ModelResponse(role="assistant", content=content)
 
     def invoke(
@@ -117,17 +121,10 @@ class DeterministicModel(Model):
         **_: Any,
     ) -> Iterator[ModelResponse]:
         user_messages = [message for message in messages if message.role == "user"]
-        question = _user_question(user_messages[-1]) if user_messages else ""
+        question = _user_context(user_messages[-1])[0] if user_messages else ""
         if question == SPLIT_REASONING_SENTINEL:
-            for content in [
-                "<THINK data-x>",
-                SPLIT_REASONING_PRIVATE,
-                "</THINK>",
-                f"\n{FINAL_ANSWER_MARKER[:8]}",
-                FINAL_ANSWER_MARKER[8:],
-                SAFE_ANSWER_SENTINEL[:12],
-                SAFE_ANSWER_SENTINEL[12:],
-            ]:
+            answer = public_answer(SAFE_ANSWER_SENTINEL)
+            for content in [answer[:5], answer[5:12], answer[12:]]:
                 yield ModelResponse(role="assistant", content=content)
             return
         yield self._response(messages)
@@ -139,17 +136,10 @@ class DeterministicModel(Model):
         **_: Any,
     ) -> AsyncIterator[ModelResponse]:
         user_messages = [message for message in messages if message.role == "user"]
-        question = _user_question(user_messages[-1]) if user_messages else ""
+        question = _user_context(user_messages[-1])[0] if user_messages else ""
         if question == SPLIT_REASONING_SENTINEL:
-            for content in [
-                "<THINK data-x>",
-                SPLIT_REASONING_PRIVATE,
-                "</THINK>",
-                f"\n{FINAL_ANSWER_MARKER[:8]}",
-                FINAL_ANSWER_MARKER[8:],
-                SAFE_ANSWER_SENTINEL[:12],
-                SAFE_ANSWER_SENTINEL[12:],
-            ]:
+            answer = public_answer(SAFE_ANSWER_SENTINEL)
+            for content in [answer[:5], answer[5:12], answer[12:]]:
                 yield ModelResponse(role="assistant", content=content)
             return
         yield self._response(messages)

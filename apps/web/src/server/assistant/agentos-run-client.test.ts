@@ -554,6 +554,29 @@ describe("AgentOS run client", () => {
     expect(content).toBe("x".repeat(32_768));
   });
 
+  it("allows a maximally escaped JSON envelope around a maximum-length public answer", async () => {
+    const envelope = `{"answer":"${"\\ud83d\\ude00".repeat(32_768)}"}`;
+    const body = JSON.stringify({ event: "RunContent", content: envelope });
+    const client = createAgentOSRunClient({
+      settings: settings(),
+      fetcher: vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          new Response(
+            `event: RunContent\ndata: ${body}\n\nevent: RunCompleted\ndata: {"event":"RunCompleted"}\n\n`,
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+    });
+
+    let content = "";
+    for await (const event of client.runAgentStream({ message: "maximum" })) {
+      if (event.type === "answer_delta") content += event.content;
+    }
+
+    expect(content).toBe(envelope);
+  });
+
   it("bounds final content by Unicode code points rather than UTF-16 length or bytes", async () => {
     const exact = "😀".repeat(32_768);
     const fetcher = vi
