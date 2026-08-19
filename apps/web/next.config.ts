@@ -2,7 +2,11 @@ import type { NextConfig } from "next";
 import nextra from "nextra";
 import path from "node:path";
 
+const distDir =
+  process.env.NODE_ENV === "development" ? ".next.nosync" : ".next";
+
 const nextConfig: NextConfig = {
+  distDir,
   output: "standalone",
   outputFileTracingIncludes: {
     "/*": [
