@@ -36,6 +36,8 @@ import {
 import { getAssistantServicePresentation } from "../assistant/assistant-service-presentation";
 import "./floating-chat-widget-shadcnui.css";
 
+const FOLLOW_LATEST_THRESHOLD = 48;
+
 function QuickSurfaceLifecycle({
   closeRef,
   instanceVersion,
@@ -109,6 +111,9 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
     session,
   } = useAssistantExperience();
   const closeRef = useRef<HTMLButtonElement>(null);
+  const followingLatest = useRef(true);
+  const lastScrolledAssistantMessageId = useRef<number | undefined>(undefined);
+  const messageHistoryRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const router = useRouter();
   const titleId = useId();
@@ -123,6 +128,17 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
     hasResolvedServiceState,
     refreshingServiceState,
   });
+  useLayoutEffect(() => {
+    if (!sending || currentAssistantMessage === undefined) return;
+    if (lastScrolledAssistantMessageId.current !== currentAssistantMessage.id) {
+      lastScrolledAssistantMessageId.current = currentAssistantMessage.id;
+      followingLatest.current = true;
+    }
+    const messageHistory = messageHistoryRef.current;
+    if (messageHistory !== null && followingLatest.current) {
+      messageHistory.scrollTop = messageHistory.scrollHeight;
+    }
+  }, [currentAssistantMessage, sending]);
   const handlePromptSubmit = ({
     attachments,
     value,
@@ -203,6 +219,15 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
         aria-live="off"
         className="floating-assistant__messages"
         data-testid="assistant-history"
+        onScroll={(event) => {
+          const messageHistory = event.currentTarget;
+          followingLatest.current =
+            messageHistory.scrollHeight -
+              messageHistory.clientHeight -
+              messageHistory.scrollTop <=
+            FOLLOW_LATEST_THRESHOLD;
+        }}
+        ref={messageHistoryRef}
         role="log"
       >
         <article className="floating-assistant__message floating-assistant__message--assistant">

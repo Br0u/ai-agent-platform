@@ -93,7 +93,9 @@ export type AssistantSessionOptions = {
 
 type ActiveAssistantRequest = {
   controller: AbortController;
+  draftEditVersion: number;
   rejectControl: (reason: symbol) => void;
+  submittedMessage: string;
   timeoutId: ReturnType<typeof setTimeout>;
   token: number;
 };
@@ -344,6 +346,7 @@ export function useAssistantSession(
   const requestStatusRef = useRef<AssistantRequestStatus>("idle");
   const requestToken = useRef(0);
   const activeRequest = useRef<ActiveAssistantRequest | null>(null);
+  const draftEditVersion = useRef(0);
   const nextMessageId = useRef(1);
   const previousPathname = useRef(pathname);
   const preservedPathname = useRef<string | null>(null);
@@ -364,14 +367,25 @@ export function useAssistantSession(
     setRequestStatus(status);
   }, []);
 
-  const cancelActiveRequest = useCallback((reason: symbol) => {
-    const active = activeRequest.current;
-    if (active === null) return;
-    activeRequest.current = null;
-    clearTimeout(active.timeoutId);
-    active.controller.abort();
-    active.rejectControl(reason);
-  }, []);
+  const cancelActiveRequest = useCallback(
+    (reason: symbol, restoreDraft = false) => {
+      const active = activeRequest.current;
+      if (active === null) return;
+      activeRequest.current = null;
+      clearTimeout(active.timeoutId);
+      active.controller.abort();
+      active.rejectControl(reason);
+      if (
+        restoreDraft &&
+        active.draftEditVersion === draftEditVersion.current
+      ) {
+        setDraftState((current) =>
+          current === "" ? active.submittedMessage : current,
+        );
+      }
+    },
+    [],
+  );
 
   useLayoutEffect(() => {
     if (previousPathname.current === pathname) return;
@@ -393,7 +407,7 @@ export function useAssistantSession(
 
   useEffect(() => {
     requestToken.current += 1;
-    cancelActiveRequest(REQUEST_CANCELLED);
+    cancelActiveRequest(REQUEST_CANCELLED, true);
     if (requestStatusRef.current === "sending") updateRequestStatus("idle");
   }, [cancelActiveRequest, endpoint, timeoutMs, updateRequestStatus]);
 
@@ -430,10 +444,37 @@ export function useAssistantSession(
         rejectControl(REQUEST_TIMEOUT);
       };
       const timeoutId = setTimeout(expireRequest, timeoutMs);
-      activeRequest.current = { controller, rejectControl, timeoutId, token };
+      const submittedDraftEditVersion = draftEditVersion.current;
+      activeRequest.current = {
+        controller,
+        draftEditVersion: submittedDraftEditVersion,
+        rejectControl,
+        submittedMessage: rawMessage,
+        timeoutId,
+        token,
+      };
       updateRequestStatus("sending");
+      setDraftState((current) => (current.trim() === message ? "" : current));
       setLatestAnnouncement("");
-      let streamedMessageIds: { user: number; assistant: number } | null = null;
+      const requestMessageIds = {
+        user: nextMessageId.current++,
+        assistant: nextMessageId.current++,
+      };
+      replaceMessages((current) => [
+        ...current,
+        { id: requestMessageIds.user, role: "user", content: message },
+        {
+          id: requestMessageIds.assistant,
+          role: "assistant",
+          content: "",
+          suggestedActions: [],
+          activities: [],
+          actions: [],
+        },
+      ]);
+      let receivedAssistantOutput = false;
+      let flushPendingStreamUpdate: (() => void) | null = null;
+      let cancelPendingStreamUpdate: (() => void) | null = null;
       try {
         const response = await Promise.race([
           fetch(endpoint, {
@@ -472,41 +513,15 @@ export function useAssistantSession(
           }
           const decoder = new TextDecoder("utf-8", { fatal: true });
           let buffer = "";
-          let assistantInserted = false;
           let done = false;
           let content = "";
           let contentCodePoints = 0;
           const activities: AssistantStreamActivityEvent[] = [];
           const actions: AssistantStreamActionEvent["action"][] = [];
-
-          const ensureStreamedAssistant = () => {
-            if (assistantInserted) return;
-            assistantInserted = true;
-            streamedMessageIds = {
-              user: nextMessageId.current++,
-              assistant: nextMessageId.current++,
-            };
-            replaceMessages((current) => [
-              ...current,
-              {
-                id: streamedMessageIds!.user,
-                role: "user",
-                content: message,
-              },
-              {
-                id: streamedMessageIds!.assistant,
-                role: "assistant",
-                content,
-                suggestedActions: [],
-                activities: [...activities],
-                actions: [...actions],
-              },
-            ]);
-          };
+          let pendingStreamUpdateFrame: number | null = null;
 
           const updateStreamedAssistant = () => {
-            if (!assistantInserted || streamedMessageIds === null) return;
-            const assistantId = streamedMessageIds.assistant;
+            const assistantId = requestMessageIds.assistant;
             replaceMessages((current) =>
               current.map((item) =>
                 item.id === assistantId && item.role === "assistant"
@@ -521,6 +536,30 @@ export function useAssistantSession(
             );
           };
 
+          const flushStreamedAssistantUpdate = () => {
+            if (pendingStreamUpdateFrame === null) return;
+            cancelAnimationFrame(pendingStreamUpdateFrame);
+            pendingStreamUpdateFrame = null;
+            updateStreamedAssistant();
+          };
+          const cancelStreamedAssistantUpdate = () => {
+            if (pendingStreamUpdateFrame === null) return;
+            cancelAnimationFrame(pendingStreamUpdateFrame);
+            pendingStreamUpdateFrame = null;
+          };
+          const scheduleStreamedAssistantUpdate = () => {
+            if (pendingStreamUpdateFrame !== null) return;
+            pendingStreamUpdateFrame = requestAnimationFrame(() => {
+              pendingStreamUpdateFrame = null;
+              if (token !== requestToken.current || controller.signal.aborted) {
+                return;
+              }
+              updateStreamedAssistant();
+            });
+          };
+          flushPendingStreamUpdate = flushStreamedAssistantUpdate;
+          cancelPendingStreamUpdate = cancelStreamedAssistantUpdate;
+
           const consumeFrame = (rawFrame: string) => {
             const event = parseAssistantStreamFrame(rawFrame);
             if (event === null || done) {
@@ -530,30 +569,31 @@ export function useAssistantSession(
               throw new SafeAssistantRequestFailure(failureAnnouncement);
             }
             if (event.type === "activity") {
+              receivedAssistantOutput = true;
               activities.push(event);
-              ensureStreamedAssistant();
-              updateStreamedAssistant();
+              scheduleStreamedAssistantUpdate();
               return;
             }
             if (event.type === "action") {
+              receivedAssistantOutput = true;
               actions.push(event.action);
-              ensureStreamedAssistant();
-              updateStreamedAssistant();
+              scheduleStreamedAssistantUpdate();
               return;
             }
             if (event.type === "answer_delta") {
+              receivedAssistantOutput = true;
               contentCodePoints += codePointLength(event.content);
               if (contentCodePoints > ASSISTANT_CONTENT_MAX_CODE_POINTS) {
                 throw new SafeAssistantRequestFailure(failureAnnouncement);
               }
               content += event.content;
-              ensureStreamedAssistant();
-              updateStreamedAssistant();
+              scheduleStreamedAssistantUpdate();
               return;
             }
-            if (!assistantInserted || content.trim().length === 0) {
+            if (content.trim().length === 0) {
               throw new SafeAssistantRequestFailure(failureAnnouncement);
             }
+            flushStreamedAssistantUpdate();
             done = true;
           };
 
@@ -587,9 +627,6 @@ export function useAssistantSession(
             reader.releaseLock();
           }
 
-          setDraftState((current) =>
-            current.trim() === message ? "" : current,
-          );
           setLatestAnnouncement(content);
           setLastFailedMessage(null);
           updateRequestStatus("idle");
@@ -601,31 +638,27 @@ export function useAssistantSession(
           if (!successResponseGuard(body)) {
             throw new SafeAssistantRequestFailure(failureAnnouncement);
           }
-          replaceMessages((current) => [
-            ...current,
-            { id: nextMessageId.current++, role: "user", content: message },
-            {
-              id: nextMessageId.current++,
-              role: "assistant",
-              content: body.message.content,
-              suggestedActions: safeAssistantSuggestedActions(
-                body.suggestedActions,
-              ),
-              activities: [],
-              actions: [],
-            },
-          ]);
-          setDraftState((current) =>
-            current.trim() === message ? "" : current,
+          replaceMessages((current) =>
+            current.map((item) =>
+              item.id === requestMessageIds.assistant &&
+              item.role === "assistant"
+                ? {
+                    ...item,
+                    content: body.message.content,
+                    suggestedActions: safeAssistantSuggestedActions(
+                      body.suggestedActions,
+                    ),
+                  }
+                : item,
+            ),
           );
           setLatestAnnouncement(body.message.content);
           setLastFailedMessage(null);
           updateRequestStatus("idle");
         }
       } catch (error) {
-        const discardStreamedMessages = () => {
-          if (streamedMessageIds === null) return;
-          const ids = streamedMessageIds;
+        const discardRequestMessages = () => {
+          const ids = requestMessageIds;
           replaceMessages((current) =>
             current.filter(
               (item) => item.id !== ids.user && item.id !== ids.assistant,
@@ -633,8 +666,7 @@ export function useAssistantSession(
           );
         };
         const retainIncompleteStream = () => {
-          if (streamedMessageIds === null) return;
-          const assistantId = streamedMessageIds.assistant;
+          const assistantId = requestMessageIds.assistant;
           replaceMessages((current) =>
             current.map((item) =>
               item.role === "assistant" && item.id === assistantId
@@ -649,7 +681,8 @@ export function useAssistantSession(
           );
         };
         if (token !== requestToken.current || error === REQUEST_CANCELLED) {
-          discardStreamedMessages();
+          cancelPendingStreamUpdate?.();
+          discardRequestMessages();
           return;
         }
         if (
@@ -657,7 +690,8 @@ export function useAssistantSession(
           error !== REQUEST_TIMEOUT &&
           controller.signal.aborted
         ) {
-          discardStreamedMessages();
+          cancelPendingStreamUpdate?.();
+          discardRequestMessages();
           return;
         }
         if (
@@ -666,10 +700,16 @@ export function useAssistantSession(
           error instanceof DOMException &&
           error.name === "AbortError"
         ) {
-          discardStreamedMessages();
+          cancelPendingStreamUpdate?.();
+          discardRequestMessages();
           return;
         }
-        retainIncompleteStream();
+        flushPendingStreamUpdate?.();
+        if (receivedAssistantOutput) retainIncompleteStream();
+        else discardRequestMessages();
+        if (draftEditVersion.current === submittedDraftEditVersion) {
+          setDraftState((current) => (current === "" ? rawMessage : current));
+        }
         setLastFailedMessage(
           error instanceof SafeAssistantRequestFailure && !error.retryable
             ? null
@@ -682,6 +722,7 @@ export function useAssistantSession(
         );
         updateRequestStatus("failed");
       } finally {
+        cancelPendingStreamUpdate?.();
         const active = activeRequest.current;
         if (active?.token === token) {
           clearTimeout(active.timeoutId);
@@ -711,6 +752,7 @@ export function useAssistantSession(
   }, [lastFailedMessage, pathname, send]);
 
   const setDraft = useCallback((value: string) => {
+    draftEditVersion.current += 1;
     setDraftState(value);
     setValidationError(
       codePointLength(value.trim()) > 500

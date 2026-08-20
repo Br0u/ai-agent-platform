@@ -48,6 +48,7 @@ describe("AssistantOrb", () => {
     assistantState: AssistantOrbState;
     ariaLabel: string;
     orbState: string;
+    paused?: boolean;
   }>([
     {
       assistantState: "idle",
@@ -58,6 +59,7 @@ describe("AssistantOrb", () => {
       assistantState: "completed",
       orbState: "breathing",
       ariaLabel: "码多多已完成",
+      paused: true,
     },
     {
       assistantState: "reading",
@@ -81,16 +83,25 @@ describe("AssistantOrb", () => {
     },
   ])(
     "maps $assistantState to the $orbState animation and an accessible label",
-    async ({ ariaLabel, assistantState, orbState }) => {
+    async ({ ariaLabel, assistantState, orbState, paused = false }) => {
       enableCanvas();
 
       render(<AssistantOrb size={64} state={assistantState} />);
 
       const orb = await screen.findByRole("img", { name: ariaLabel });
       expect(orb).toHaveAttribute("data-orb-state", orbState);
-      expect(orb).toHaveAttribute("data-paused", "false");
+      expect(orb).toHaveAttribute("data-paused", String(paused));
     },
   );
+
+  it("paints a completed orb once without scheduling another frame", async () => {
+    const context = enableCanvas();
+
+    render(<AssistantOrb size={20} state="completed" />);
+
+    await waitFor(() => expect(context.fill).toHaveBeenCalled());
+    expect(requestAnimationFrame).not.toHaveBeenCalled();
+  });
 
   it("runs the listening preset at the requested quarter speed", async () => {
     enableCanvas();

@@ -35,7 +35,25 @@ const success = (
   );
 
 describe("useAssistantSession", () => {
-  beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+    let nextFrameId = 0;
+    const frames = new Map<number, FrameRequestCallback>();
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      const frameId = ++nextFrameId;
+      frames.set(frameId, callback);
+      queueMicrotask(() => {
+        const pending = frames.get(frameId);
+        if (pending === undefined) return;
+        frames.delete(frameId);
+        pending(performance.now());
+      });
+      return frameId;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (frameId: number) => {
+      frames.delete(frameId);
+    });
+  });
   afterEach(() => {
     cleanup();
     window.history.replaceState(null, "", "/");
@@ -154,6 +172,36 @@ describe("useAssistantSession", () => {
 
     expect(signal?.aborted).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("creates the next turn before the response returns its first frame", async () => {
+    vi.mocked(fetch).mockReturnValue(new Promise(() => undefined));
+    const { result, unmount } = renderHook(() =>
+      useAssistantSession("/assistant"),
+    );
+    act(() => result.current.setDraft("下一轮问题"));
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = result.current.submit();
+    });
+
+    expect(result.current.requestStatus).toBe("sending");
+    expect(result.current.draft).toBe("");
+    expect(result.current.messages).toEqual([
+      { id: 1, role: "user", content: "下一轮问题" },
+      {
+        id: 2,
+        role: "assistant",
+        content: "",
+        suggestedActions: [],
+        activities: [],
+        actions: [],
+      },
+    ]);
+
+    unmount();
+    await pending;
   });
 
   it("sends the exact V2 request with the current pathname and search", async () => {
@@ -432,6 +480,77 @@ describe("useAssistantSession", () => {
       ],
     });
     expect(result.current.latestAnnouncement).toBe("第一段第二段");
+  });
+
+  it("coalesces streamed answer deltas into one visible update per animation frame", async () => {
+    const encoder = new TextEncoder();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    let nextFrameId = 0;
+    const frames = new Map<number, FrameRequestCallback>();
+    const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      const frameId = ++nextFrameId;
+      frames.set(frameId, callback);
+      return frameId;
+    });
+    vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
+    vi.stubGlobal("cancelAnimationFrame", (frameId: number) => {
+      frames.delete(frameId);
+    });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(streamController) {
+            controller = streamController;
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+    );
+    const { result } = renderHook(() => useAssistantSession("/assistant"));
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = result.current.submit("高频流式问题");
+    });
+    await act(async () => {
+      controller.enqueue(
+        encoder.encode(
+          streamFrame({
+            type: "activity",
+            phase: "analyzing",
+            label: "正在分析问题",
+          }),
+        ),
+      );
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.messages).toHaveLength(2));
+
+    await act(async () => {
+      controller.enqueue(
+        encoder.encode(
+          streamFrame({ type: "answer_delta", content: "第一段" }) +
+            streamFrame({ type: "answer_delta", content: "第二段" }) +
+            streamFrame({ type: "answer_delta", content: "第三段" }),
+        ),
+      );
+      await Promise.resolve();
+    });
+
+    expect(requestAnimationFrame).toHaveBeenCalledOnce();
+    expect(result.current.messages.at(-1)?.content).toBe("");
+
+    await act(async () => {
+      frames.get(1)?.(performance.now());
+      await Promise.resolve();
+    });
+    expect(result.current.messages.at(-1)?.content).toBe("第一段第二段第三段");
+
+    await act(async () => {
+      controller.enqueue(encoder.encode(streamFrame({ type: "done" })));
+      controller.close();
+      await pending;
+    });
   });
 
   it("keeps one absolute deadline even while response chunks keep arriving", async () => {
@@ -729,6 +848,27 @@ describe("useAssistantSession", () => {
     expect(result.current.latestAnnouncement).toBe(
       "发送失败，请重试或使用帮助中心或商务咨询。",
     );
+  });
+
+  it("preserves an intentionally cleared draft when the active request fails", async () => {
+    let resolve!: (response: Response) => void;
+    vi.mocked(fetch).mockReturnValue(new Promise((done) => (resolve = done)));
+    const { result } = renderHook(() => useAssistantSession("/support"));
+    act(() => result.current.setDraft("原问题"));
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = result.current.submit();
+    });
+    act(() => result.current.setDraft("下一问题"));
+    act(() => result.current.setDraft(""));
+    await act(async () => {
+      resolve(new Response(null, { status: 503 }));
+      await pending;
+    });
+
+    expect(result.current.requestStatus).toBe("failed");
+    expect(result.current.draft).toBe("");
   });
 
   it("does not expose legacy session expiry state", async () => {

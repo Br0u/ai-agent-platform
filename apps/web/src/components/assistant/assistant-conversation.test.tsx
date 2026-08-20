@@ -128,6 +128,144 @@ describe("AssistantConversation", () => {
     );
   });
 
+  it("follows the active stream unless the reader scrolls away", () => {
+    const previousMessages: AssistantSession["messages"] = [
+      { id: 1, role: "user", content: "上一轮问题" },
+      {
+        id: 2,
+        role: "assistant",
+        content: "上一轮回答",
+        suggestedActions: [],
+        activities: [],
+        actions: [],
+      },
+    ];
+    const view = renderConversation(
+      createSession({ messages: previousMessages, requestStatus: "idle" }),
+    );
+    const log = screen.getByTestId("assistant-message-history");
+    Object.defineProperty(log, "scrollHeight", {
+      configurable: true,
+      value: 900,
+    });
+    log.scrollTop = 120;
+
+    view.rerender(
+      <AssistantConversation
+        ariaLabel="码多多对话"
+        registerComposer={() => () => undefined}
+        session={createSession({
+          messages: [
+            ...previousMessages,
+            { id: 3, role: "user", content: "下一轮问题" },
+            {
+              id: 4,
+              role: "assistant",
+              content: "",
+              suggestedActions: [],
+              activities: [],
+              actions: [],
+            },
+          ],
+          requestStatus: "sending",
+        })}
+        variant="dock"
+      />,
+    );
+
+    expect(log.scrollTop).toBe(900);
+    Object.defineProperties(log, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 1_200 },
+    });
+    log.scrollTop = 360;
+
+    view.rerender(
+      <AssistantConversation
+        ariaLabel="码多多对话"
+        registerComposer={() => () => undefined}
+        session={createSession({
+          messages: [
+            ...previousMessages,
+            { id: 3, role: "user", content: "下一轮问题" },
+            {
+              id: 4,
+              role: "assistant",
+              content: "正在回答",
+              suggestedActions: [],
+              activities: [],
+              actions: [],
+            },
+          ],
+          requestStatus: "sending",
+        })}
+        variant="dock"
+      />,
+    );
+
+    expect(log.scrollTop).toBe(1_200);
+
+    log.scrollTop = 200;
+    fireEvent.scroll(log);
+    Object.defineProperty(log, "scrollHeight", {
+      configurable: true,
+      value: 1_500,
+    });
+    view.rerender(
+      <AssistantConversation
+        ariaLabel="码多多对话"
+        registerComposer={() => () => undefined}
+        session={createSession({
+          messages: [
+            ...previousMessages,
+            { id: 3, role: "user", content: "下一轮问题" },
+            {
+              id: 4,
+              role: "assistant",
+              content: "继续回答",
+              suggestedActions: [],
+              activities: [],
+              actions: [],
+            },
+          ],
+          requestStatus: "sending",
+        })}
+        variant="dock"
+      />,
+    );
+    expect(log.scrollTop).toBe(200);
+
+    log.scrollTop = 1_200;
+    fireEvent.scroll(log);
+    Object.defineProperty(log, "scrollHeight", {
+      configurable: true,
+      value: 1_800,
+    });
+    view.rerender(
+      <AssistantConversation
+        ariaLabel="码多多对话"
+        registerComposer={() => () => undefined}
+        session={createSession({
+          messages: [
+            ...previousMessages,
+            { id: 3, role: "user", content: "下一轮问题" },
+            {
+              id: 4,
+              role: "assistant",
+              content: "回答完成前的最后一段",
+              suggestedActions: [],
+              activities: [],
+              actions: [],
+            },
+          ],
+          requestStatus: "sending",
+        })}
+        variant="dock"
+      />,
+    );
+    expect(log.scrollTop).toBe(1_800);
+  });
+
   it("renders assistant replies as safe GFM Markdown while keeping user input literal", () => {
     const session = createSession({
       messages: [
