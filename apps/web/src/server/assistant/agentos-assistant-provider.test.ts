@@ -328,7 +328,7 @@ describe("AgentOSAssistantProvider", () => {
   });
 
   it("matches a concise navigation request against the registered route title", async () => {
-    const { provider, runClient } = fixture();
+    const { provider, runClient, pageResolver } = fixture();
 
     await expect(
       provider.reply({
@@ -346,6 +346,28 @@ describe("AgentOSAssistantProvider", () => {
       suggestedActions: [{ label: "产品介绍", href: "/product" }],
     });
     expect(runClient.runAgentStream).not.toHaveBeenCalled();
+    expect(pageResolver.exists).toHaveBeenCalledExactlyOnceWith(
+      "/product",
+      undefined,
+    );
+  });
+
+  it("falls back to the Agent when a direct navigation destination is unavailable", async () => {
+    const { provider, runClient, pageResolver } = fixture();
+    pageResolver.exists.mockResolvedValue(false);
+
+    await expect(
+      provider.reply({
+        request: { ...assistantRequest, message: "打开产品页面" },
+        pageContext: null,
+      }),
+    ).resolves.toEqual({ content: "真实模型回答", suggestedActions: [] });
+
+    expect(pageResolver.exists).toHaveBeenCalledExactlyOnceWith(
+      "/product",
+      undefined,
+    );
+    expect(runClient.runAgentStream).toHaveBeenCalledOnce();
   });
 
   it("treats 导航去 as a direct navigation request", async () => {

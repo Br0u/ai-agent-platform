@@ -113,23 +113,23 @@ export class AgentOSAssistantProvider implements AssistantProvider {
   private async *runStream(
     invocation: AssistantProviderInvocation,
   ): AsyncIterable<AssistantProviderEvent> {
-    const requestedNavigation = requestedNavigationPath(invocation);
+    let requestedNavigation = requestedNavigationPath(invocation);
     if (requestedNavigation !== null) {
       const route = matchRoute(navigationPathname(requestedNavigation));
       if (route?.group === "public" && route.status === "live") {
-        yield {
-          type: "answer_delta",
-          content: `可以，点击下方“${route.title}”前往。`,
-        };
-        yield {
-          type: "action",
-          action: {
-            kind: "navigate",
-            pathname: requestedNavigation,
-            label: route.title,
-          },
-        };
-        return;
+        const action = await this.validatedNavigation(
+          requestedNavigation,
+          invocation.signal,
+        );
+        if (action !== null) {
+          yield {
+            type: "answer_delta",
+            content: `可以，点击下方“${route.title}”前往。`,
+          };
+          yield action;
+          return;
+        }
+        requestedNavigation = null;
       }
     }
     const message = buildAssistantPrompt(invocation);
