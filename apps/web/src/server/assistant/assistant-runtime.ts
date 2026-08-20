@@ -125,6 +125,7 @@ export class AssistantRuntimeUnavailableError extends Error {
 const PLACEHOLDER_MESSAGE = "模型尚未配置，当前为安全占位模式。";
 const AVAILABLE_MESSAGE = "AI 助理基础服务已就绪。";
 const DEGRADED_MESSAGE = "助手基础服务暂不可用。";
+const DEVELOPMENT_PAGE_REQUEST_TIMEOUT_MS = 5_000;
 const CLOSED_CIRCUIT: SafeCircuitInspection = {
   state: "closed",
   consecutiveFailures: 0,
@@ -257,7 +258,9 @@ export function createAssistantRuntime(options: RuntimeOptions = {}) {
     pageResolver ??= createPublicPageContextResolver({
       origin: publicOrigin,
       fetch: options.fetcher ?? globalThis.fetch,
-      ...(environment.NODE_ENV === "development" ? { timeoutMs: 30_000 } : {}),
+      ...(environment.NODE_ENV === "development"
+        ? { timeoutMs: DEVELOPMENT_PAGE_REQUEST_TIMEOUT_MS }
+        : {}),
     });
     return pageResolver;
   }

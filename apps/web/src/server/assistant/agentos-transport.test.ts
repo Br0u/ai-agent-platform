@@ -72,7 +72,7 @@ describe("AgentOS transport cancellation", () => {
     ).rejects.toMatchObject({ code: "timeout" });
   });
 
-  it("treats the stream timeout as an idle timeout and renews it after each chunk", async () => {
+  it("enforces one absolute stream deadline even while chunks keep arriving", async () => {
     vi.useFakeTimers();
     let controller!: ReadableStreamDefaultController<Uint8Array>;
     const transport = createAgentOSTransport({
@@ -89,7 +89,6 @@ describe("AgentOS transport cancellation", () => {
       ),
     });
     const consume = async () => {
-      const chunks: number[][] = [];
       for await (const chunk of transport.stream({
         method: "GET",
         path: "/active-stream",
@@ -98,20 +97,28 @@ describe("AgentOS transport cancellation", () => {
         timeoutMs: 100,
         maxResponseBytes: 1_024,
       })) {
-        chunks.push([...chunk]);
+        void chunk;
       }
-      return chunks;
     };
-    const running = consume();
-    const assertion = expect(running).resolves.toEqual([[1], [2]]);
+    let settled = false;
+    const running = consume()
+      .catch((error: unknown) => error)
+      .finally(() => {
+        settled = true;
+      });
 
     controller.enqueue(new Uint8Array([1]));
     await vi.advanceTimersByTimeAsync(75);
     controller.enqueue(new Uint8Array([2]));
-    await vi.advanceTimersByTimeAsync(75);
-    controller.close();
+    await vi.advanceTimersByTimeAsync(25);
+    const settledAtDeadline = settled;
+    if (!settled) {
+      controller.close();
+      await vi.runAllTimersAsync();
+    }
 
-    await assertion;
+    expect(settledAtDeadline).toBe(true);
+    await expect(running).resolves.toMatchObject({ code: "timeout" });
   });
 });
 

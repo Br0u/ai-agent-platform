@@ -271,7 +271,7 @@ describe("assistant server runtime", () => {
     }
   });
 
-  it("allows development link validation to outlive the production destination budget", async () => {
+  it("keeps development link validation inside the production destination budget", async () => {
     vi.useFakeTimers();
     try {
       const fetcher = vi.fn<typeof fetch>(async (input) => {
@@ -309,8 +309,38 @@ describe("assistant server runtime", () => {
       await vi.advanceTimersByTimeAsync(2_001);
 
       await expect(loading).resolves.toMatchObject({
-        links: [{ href: "/pricing", label: "价格" }],
+        links: [],
       });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("caps a stalled development page request at five seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      const fetcher = vi.fn<typeof fetch>(
+        async (_input, init) =>
+          await new Promise<Response>(() => {
+            signal = init?.signal ?? undefined;
+          }),
+      );
+      const runtime = createAssistantRuntime({
+        environment: { ...VALID_ENVIRONMENT, NODE_ENV: "development" },
+        fetcher,
+      });
+      const loading = runtime.pageResolver.load({
+        pathname: "/product",
+        search: "",
+      });
+
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(signal?.aborted).toBe(true);
+      await expect(loading).resolves.toBeNull();
     } finally {
       vi.useRealTimers();
     }

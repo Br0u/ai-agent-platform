@@ -420,23 +420,18 @@ export function createAgentOSTransport(options: {
       });
       if (request.signal?.aborted) onExternalAbort();
 
-      const waitForUpstream = async <T>(operation: Promise<T>): Promise<T> => {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const idleTimeout = new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() => {
-            if (abortedBy !== null) return;
-            abortedBy = "timeout";
-            controller.abort();
-            cancelBody(reader, response);
-            reject(new AgentOSTransportError("timeout"));
-          }, request.timeoutMs);
-        });
-        try {
-          return await Promise.race([operation, idleTimeout, externalAbort]);
-        } finally {
-          if (timer) clearTimeout(timer);
-        }
-      };
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          if (abortedBy !== null) return;
+          abortedBy = "timeout";
+          controller.abort();
+          cancelBody(reader, response);
+          reject(new AgentOSTransportError("timeout"));
+        }, request.timeoutMs);
+      });
+      const waitForUpstream = <T>(operation: Promise<T>): Promise<T> =>
+        Promise.race([operation, deadline, externalAbort]);
 
       let completed = false;
       try {
@@ -499,6 +494,7 @@ export function createAgentOSTransport(options: {
         if (error instanceof AgentOSTransportError) throw error;
         throw new AgentOSTransportError(abortedBy ?? "transport_error");
       } finally {
+        if (timer) clearTimeout(timer);
         request.signal?.removeEventListener("abort", onExternalAbort);
         if (!completed) cancelBody(reader, response);
         if (reader !== null) {

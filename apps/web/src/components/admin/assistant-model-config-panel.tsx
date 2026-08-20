@@ -953,7 +953,13 @@ export function AssistantModelConfigPanel({
           <div className="assistant-model-config__fields">
             <label>
               <span>Model ID</span>
+              <small id="assistant-model-id-guidance">
+                填写供应商或部署方提供的精确 Model
+                ID；系统不会自动发现模型列表。
+              </small>
               <input
+                aria-describedby="assistant-model-id-guidance"
+                aria-label="Model ID"
                 disabled={!writable}
                 maxLength={MODEL_ID_MAX_LENGTH}
                 onChange={(event) => setModelId(event.target.value)}

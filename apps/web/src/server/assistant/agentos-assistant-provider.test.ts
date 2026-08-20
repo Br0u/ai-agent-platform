@@ -148,22 +148,7 @@ describe("AgentOSAssistantProvider", () => {
       history: assistantRequest.history,
       userQuestion: "不要改写我的问题 ✅",
     });
-    expect(context.publicSiteCatalog.navigation).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          label: "解决方案",
-          sections: expect.arrayContaining([
-            expect.objectContaining({
-              items: expect.arrayContaining([
-                expect.objectContaining({ label: "金融行业解决方案" }),
-                expect.objectContaining({ label: "政务行业解决方案" }),
-              ]),
-            }),
-          ]),
-        }),
-      ]),
-    );
-    expect(context.publicSiteCatalog.solutions).toEqual(
+    expect(context.publicSiteCatalog).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           label: "交易监测模型智能开发",
@@ -173,14 +158,23 @@ describe("AgentOSAssistantProvider", () => {
           label: "工商注册智能导办",
           href: "/solutions/government-process",
         }),
+        expect.objectContaining({ label: "价格与服务", href: "/pricing" }),
+        expect.objectContaining({ label: "申请体验", href: "/trial" }),
       ]),
     );
-    expect(context.publicSiteCatalog.pages).toEqual(
-      expect.arrayContaining([
-        { label: "价格与服务", href: "/pricing" },
-        { label: "申请体验", href: "/trial" },
-      ]),
+    const catalog = context.publicSiteCatalog as Array<
+      Record<string, unknown> & { href: string }
+    >;
+    expect(new Set(catalog.map((entry) => entry.href)).size).toBe(
+      catalog.length,
     );
+    expect(
+      catalog.every((entry) =>
+        Object.keys(entry).every((key) =>
+          ["label", "href", "description"].includes(key),
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("runs without generating or cleaning a session when no signal is supplied", async () => {
@@ -328,7 +322,7 @@ describe("AgentOSAssistantProvider", () => {
   });
 
   it("matches a concise navigation request against the registered route title", async () => {
-    const { provider, runClient } = fixture();
+    const { provider, runClient, pageResolver } = fixture();
 
     await expect(
       provider.reply({
@@ -346,6 +340,28 @@ describe("AgentOSAssistantProvider", () => {
       suggestedActions: [{ label: "产品介绍", href: "/product" }],
     });
     expect(runClient.runAgentStream).not.toHaveBeenCalled();
+    expect(pageResolver.exists).toHaveBeenCalledExactlyOnceWith(
+      "/product",
+      undefined,
+    );
+  });
+
+  it("falls back to the Agent when a direct navigation destination is unavailable", async () => {
+    const { provider, runClient, pageResolver } = fixture();
+    pageResolver.exists.mockResolvedValue(false);
+
+    await expect(
+      provider.reply({
+        request: { ...assistantRequest, message: "打开产品页面" },
+        pageContext: null,
+      }),
+    ).resolves.toEqual({ content: "真实模型回答", suggestedActions: [] });
+
+    expect(pageResolver.exists).toHaveBeenCalledExactlyOnceWith(
+      "/product",
+      undefined,
+    );
+    expect(runClient.runAgentStream).toHaveBeenCalledOnce();
   });
 
   it("treats 导航去 as a direct navigation request", async () => {
