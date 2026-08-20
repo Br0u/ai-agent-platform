@@ -25,6 +25,14 @@ describe("AssistantContentFilter", () => {
     }
   });
 
+  it("emits nothing until the entire structured answer validates", () => {
+    const filter = new AssistantContentFilter();
+
+    expect(filter.push('{"answer":"公开')).toBe("");
+    expect(filter.push('回答"}')).toBe("");
+    expect(filter.finish()).toBe("公开回答");
+  });
+
   it("enforces the public answer limit after removing the JSON envelope", () => {
     const exact = "x".repeat(ASSISTANT_CONTENT_MAX_CODE_POINTS);
     expect(filtered([JSON.stringify({ answer: exact })])).toBe(exact);

@@ -25,7 +25,7 @@ export const PUBLIC_PAGE_QUERY_KEY_MAX_CODE_POINTS = 64;
 export const PUBLIC_PAGE_QUERY_VALUE_MAX_CODE_POINTS = 256;
 export const PUBLIC_PAGE_TITLE_MAX_CODE_POINTS = 200;
 export const PUBLIC_PAGE_TEXT_MAX_CODE_POINTS = 12_000;
-export const PUBLIC_PAGE_LINKS_MAX = 64;
+export const PUBLIC_PAGE_LINKS_MAX = 16;
 export const PUBLIC_PAGE_DESTINATION_CONCURRENCY = 4;
 
 const EXCLUDED_PUBLIC_PATHS = new Set([
@@ -427,10 +427,7 @@ export function createPublicPageContextResolver(
 ) {
   const origin = fixedOrigin(options.origin);
   const timeoutMs = options.timeoutMs ?? PUBLIC_PAGE_REQUEST_TIMEOUT_MS;
-  const destinationDeadlineMs = Math.max(
-    PUBLIC_PAGE_DESTINATION_DEADLINE_MS,
-    timeoutMs,
-  );
+  const destinationDeadlineMs = PUBLIC_PAGE_DESTINATION_DEADLINE_MS;
   const maxBytes = options.maxBytes ?? PUBLIC_PAGE_BODY_MAX_BYTES;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new TypeError("timeoutMs must be positive");

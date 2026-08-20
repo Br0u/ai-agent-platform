@@ -53,7 +53,7 @@ describe("public page context resolver", () => {
       queryValue: 256,
       title: 200,
       text: 12_000,
-      links: 64,
+      links: 16,
       concurrency: 4,
     });
   });
@@ -382,7 +382,7 @@ describe("public page context resolver", () => {
     );
   });
 
-  it("validates up to 64 unique same-origin public links", async () => {
+  it("validates only the bounded set of unique same-origin public links", async () => {
     const links = [
       ...Array.from(
         { length: PUBLIC_PAGE_LINKS_MAX + 1 },

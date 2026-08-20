@@ -19,13 +19,34 @@ import {
   type AgentOSRunDiagnostic,
 } from "./agentos-run-client";
 
-const PUBLIC_SITE_LINKS = [
-  ...portalNavigation.flatMap((entry) => [
-    { label: entry.label, href: entry.href },
-    ...entry.children.flatMap((section) =>
+type PublicSiteCatalogEntry = {
+  label: string;
+  href: string;
+  description?: string;
+};
+
+const publicSiteCatalogByHref = new Map<string, PublicSiteCatalogEntry>();
+for (const entry of [
+  ...portalNavigation.flatMap((navigation) => [
+    {
+      label: navigation.label,
+      href: navigation.href,
+      ...(navigation.description
+        ? { description: navigation.description }
+        : {}),
+    },
+    ...navigation.children.flatMap((section) =>
       section.items.flatMap((item) =>
         "href" in item && item.href
-          ? [{ label: item.label, href: item.href }]
+          ? [
+              {
+                label: item.label,
+                href: item.href,
+                ...(item.description
+                  ? { description: item.description }
+                  : {}),
+              },
+            ]
           : [],
       ),
     ),
@@ -40,43 +61,16 @@ const PUBLIC_SITE_LINKS = [
   ...industrySolutionCatalog.map((solution) => ({
     label: solution.name,
     href: `/solutions/${solution.key}`,
-  })),
-];
-
-const PUBLIC_SITE_CATALOG = {
-  navigation: portalNavigation.map((entry) => ({
-    label: entry.label,
-    href: entry.href,
-    ...(entry.description ? { description: entry.description } : {}),
-    sections: entry.children.map((section) => ({
-      label: section.label,
-      ...(section.groupLabel ? { groupLabel: section.groupLabel } : {}),
-      items: section.items.flatMap((item) =>
-        "href" in item && item.href
-          ? [
-              {
-                label: item.label,
-                href: item.href,
-                ...(item.description ? { description: item.description } : {}),
-              },
-            ]
-          : [],
-      ),
-    })),
-  })),
-  pages: routeRegistry.flatMap((route) =>
-    route.group === "public" &&
-    route.status === "live" &&
-    !route.path.includes("[")
-      ? [{ label: route.title, href: route.path }]
-      : [],
-  ),
-  solutions: industrySolutionCatalog.map((solution) => ({
-    label: solution.name,
-    href: `/solutions/${solution.key}`,
     description: solution.value,
   })),
-};
+]) {
+  publicSiteCatalogByHref.set(entry.href, entry);
+}
+const PUBLIC_SITE_CATALOG = [...publicSiteCatalogByHref.values()];
+const PUBLIC_SITE_LINKS = PUBLIC_SITE_CATALOG.map(({ label, href }) => ({
+  label,
+  href,
+}));
 
 export type AgentOSRunFailureEvent = {
   code: AgentOSRunClientErrorCode | "unexpected";

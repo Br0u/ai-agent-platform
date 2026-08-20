@@ -91,21 +91,21 @@ Expected: PASS。
 - Test: `apps/web/src/server/assistant/public-page-context.test.ts`
 - Test: `apps/web/src/server/assistant/assistant-runtime.test.ts`
 
-- [ ] **Step 1: Write failing bound tests**
+- [x] **Step 1: Write failing bound tests**
 
 断言最多验证 16 个唯一链接；自定义/开发请求 timeout 大于 2 秒时，目的页验证仍在固定 2 秒共享 deadline 中结束；开发页请求在 5 秒截止。
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `node_modules/.bin/vitest run src/server/assistant/public-page-context.test.ts src/server/assistant/assistant-runtime.test.ts`
 
 Expected: FAIL，当前为 64 条且开发 deadline 会扩到 30 秒。
 
-- [ ] **Step 3: Apply fixed constants**
+- [x] **Step 3: Apply fixed constants**
 
 将 `PUBLIC_PAGE_LINKS_MAX` 改为 16；目的页共享 deadline 不再随单请求 timeout 扩张；开发 resolver timeout 改为 5 秒。不增加缓存，继续每次匿名读取。
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Run: `node_modules/.bin/vitest run src/server/assistant/public-page-context.test.ts src/server/assistant/assistant-runtime.test.ts`
 
@@ -118,21 +118,21 @@ Expected: PASS。
 - Test: `apps/web/src/server/assistant/agentos-assistant-provider.test.ts`
 - Test: `apps/web/src/server/assistant/assistant-content-filter.test.ts`
 
-- [ ] **Step 1: Write failing prompt-shape and safety tests**
+- [x] **Step 1: Write failing prompt-shape and safety tests**
 
 断言 `publicSiteCatalog` 是按 href 去重的扁平数组、每个条目只含安全的 label/href/可选 description；结构化答案在 JSON 完整前不得发出任何 answer delta。
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `node_modules/.bin/vitest run src/server/assistant/agentos-assistant-provider.test.ts src/server/assistant/assistant-content-filter.test.ts`
 
 Expected: prompt-shape test FAIL；安全缓冲测试保持 PASS。
 
-- [ ] **Step 3: Flatten and deduplicate existing data**
+- [x] **Step 3: Flatten and deduplicate existing data**
 
 复用 `portalNavigation`、`routeRegistry`、`industrySolutionCatalog`，以 href 为 key 生成一个扁平目录。保留结构化答案完整校验，不实现 partial JSON 直通。
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Run: `node_modules/.bin/vitest run src/server/assistant/agentos-assistant-provider.test.ts src/server/assistant/assistant-content-filter.test.ts`
 
