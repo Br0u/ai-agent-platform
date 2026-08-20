@@ -202,15 +202,15 @@ Expected: PASS。
 
 **Files:** none expected beyond prior tasks.
 
-- [ ] **Step 1: Run Web targeted and full checks**
+- [x] **Step 1: Run Web Agent-targeted and production checks**
 
-Run targeted Agent/Web tests, Web typecheck, Web lint, Web build and `git diff --check`.
+Run the complete Agent/Web assistant test set, Web typecheck, Web lint, Web build and `git diff --check`.
 
-- [ ] **Step 2: Run Agent checks**
+- [x] **Step 2: Run Agent checks**
 
 Run Agent pytest, Ruff and mypy even though Agent source is unchanged, because runtime rebuild crosses the Web/Agent protocol boundary.
 
-- [ ] **Step 3: Rebuild current-source services**
+- [x] **Step 3: Rebuild current-source services**
 
 Rebuild Agent and Skill Registry from this worktree, start Web from this worktree, and verify health/version through current ports. Do not change `infra/agent/model-endpoints.json`.
 
@@ -218,6 +218,8 @@ Rebuild Agent and Skill Registry from this worktree, start Web from this worktre
 
 Verify ordinary answer, page-aware answer, Skill query, valid navigation, dead-navigation fallback, and no CoT/raw structured envelope in the UI.
 
-- [ ] **Step 5: Inspect final diff and branch state**
+Current runtime has no active model configuration. Browser acceptance therefore verified the healthy placeholder status, safe user-facing unavailable message and absence of internal/raw output; model-backed answer, Skill and navigation cases remain covered by the Agent/Web automated suites but cannot be live-verified until a model is configured.
+
+- [x] **Step 5: Inspect final diff and branch state**
 
 Run `git status --short --branch`, `git diff --check`, and review every changed path. Preserve `main` and unrelated files.
