@@ -850,6 +850,27 @@ describe("useAssistantSession", () => {
     );
   });
 
+  it("preserves an intentionally cleared draft when the active request fails", async () => {
+    let resolve!: (response: Response) => void;
+    vi.mocked(fetch).mockReturnValue(new Promise((done) => (resolve = done)));
+    const { result } = renderHook(() => useAssistantSession("/support"));
+    act(() => result.current.setDraft("原问题"));
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = result.current.submit();
+    });
+    act(() => result.current.setDraft("下一问题"));
+    act(() => result.current.setDraft(""));
+    await act(async () => {
+      resolve(new Response(null, { status: 503 }));
+      await pending;
+    });
+
+    expect(result.current.requestStatus).toBe("failed");
+    expect(result.current.draft).toBe("");
+  });
+
   it("does not expose legacy session expiry state", async () => {
     vi.mocked(fetch).mockResolvedValue(success("回答"));
     const { result } = renderHook(() => useAssistantSession("/assistant"));

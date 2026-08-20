@@ -130,9 +130,7 @@ function QuickSurfacePanel({ instanceVersion }: { instanceVersion: number }) {
   });
   useLayoutEffect(() => {
     if (!sending || currentAssistantMessage === undefined) return;
-    if (
-      lastScrolledAssistantMessageId.current !== currentAssistantMessage.id
-    ) {
+    if (lastScrolledAssistantMessageId.current !== currentAssistantMessage.id) {
       lastScrolledAssistantMessageId.current = currentAssistantMessage.id;
       followingLatest.current = true;
     }

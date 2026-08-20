@@ -93,6 +93,7 @@ export type AssistantSessionOptions = {
 
 type ActiveAssistantRequest = {
   controller: AbortController;
+  draftEditVersion: number;
   rejectControl: (reason: symbol) => void;
   submittedMessage: string;
   timeoutId: ReturnType<typeof setTimeout>;
@@ -345,6 +346,7 @@ export function useAssistantSession(
   const requestStatusRef = useRef<AssistantRequestStatus>("idle");
   const requestToken = useRef(0);
   const activeRequest = useRef<ActiveAssistantRequest | null>(null);
+  const draftEditVersion = useRef(0);
   const nextMessageId = useRef(1);
   const previousPathname = useRef(pathname);
   const preservedPathname = useRef<string | null>(null);
@@ -373,7 +375,10 @@ export function useAssistantSession(
       clearTimeout(active.timeoutId);
       active.controller.abort();
       active.rejectControl(reason);
-      if (restoreDraft) {
+      if (
+        restoreDraft &&
+        active.draftEditVersion === draftEditVersion.current
+      ) {
         setDraftState((current) =>
           current === "" ? active.submittedMessage : current,
         );
@@ -439,17 +444,17 @@ export function useAssistantSession(
         rejectControl(REQUEST_TIMEOUT);
       };
       const timeoutId = setTimeout(expireRequest, timeoutMs);
+      const submittedDraftEditVersion = draftEditVersion.current;
       activeRequest.current = {
         controller,
+        draftEditVersion: submittedDraftEditVersion,
         rejectControl,
         submittedMessage: rawMessage,
         timeoutId,
         token,
       };
       updateRequestStatus("sending");
-      setDraftState((current) =>
-        current.trim() === message ? "" : current,
-      );
+      setDraftState((current) => (current.trim() === message ? "" : current));
       setLatestAnnouncement("");
       const requestMessageIds = {
         user: nextMessageId.current++,
@@ -702,7 +707,9 @@ export function useAssistantSession(
         flushPendingStreamUpdate?.();
         if (receivedAssistantOutput) retainIncompleteStream();
         else discardRequestMessages();
-        setDraftState((current) => (current === "" ? rawMessage : current));
+        if (draftEditVersion.current === submittedDraftEditVersion) {
+          setDraftState((current) => (current === "" ? rawMessage : current));
+        }
         setLastFailedMessage(
           error instanceof SafeAssistantRequestFailure && !error.retryable
             ? null
@@ -745,6 +752,7 @@ export function useAssistantSession(
   }, [lastFailedMessage, pathname, send]);
 
   const setDraft = useCallback((value: string) => {
+    draftEditVersion.current += 1;
     setDraftState(value);
     setValidationError(
       codePointLength(value.trim()) > 500
