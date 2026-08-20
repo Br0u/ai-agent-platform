@@ -348,6 +348,21 @@ describe("AgentOSAssistantProvider", () => {
     expect(runClient.runAgentStream).not.toHaveBeenCalled();
   });
 
+  it("treats 导航去 as a direct navigation request", async () => {
+    const { provider, runClient } = fixture();
+
+    await expect(
+      provider.reply({
+        request: { ...assistantRequest, message: "导航去解决方案" },
+        pageContext: null,
+      }),
+    ).resolves.toEqual({
+      content: "可以，点击下方“解决方案”前往。",
+      suggestedActions: [{ label: "解决方案", href: "/solutions" }],
+    });
+    expect(runClient.runAgentStream).not.toHaveBeenCalled();
+  });
+
   it("navigates for 去 plus an exact link but not for 去哪里 questions", async () => {
     const pageContext = {
       pathname: "/",
@@ -412,6 +427,7 @@ describe("AgentOSAssistantProvider", () => {
     "过去技能中心有哪些内容",
     "去年的技能中心有哪些内容",
     "去掉技能中心链接",
+    "导航去掉技能中心链接",
     "技能名称需要去重",
   ])("does not treat %s as navigation", async (message) => {
     const { provider, runClient } = fixture();

@@ -2,11 +2,18 @@ from agno.skills import Skills
 
 from agent_service.default_agent import (
     MADUODUO_INSTRUCTIONS,
+    NAVIGATION_INSTRUCTION,
     PublicAssistantAnswer,
     build_default_agent,
 )
 from agent_service.model_runtime_slot import ModelRuntimeSlot
 from agent_service.navigation_tool import suggest_navigation
+
+
+def test_navigation_action_is_a_clickable_reference_not_only_an_explicit_jump() -> None:
+    assert "作为可点击引用" in NAVIGATION_INSTRUCTION
+    assert "不代表已经跳转" in NAVIGATION_INSTRUCTION
+    assert "只有当用户明确要求" not in NAVIGATION_INSTRUCTION
 
 
 def test_build_default_agent_has_exact_runtime_identity_and_safe_contract() -> None:
@@ -63,9 +70,9 @@ def test_build_default_agent_has_exact_runtime_identity_and_safe_contract() -> N
             "只把面向用户的最终答案写入结构化输出的 answer 字段。"
         ),
         (
-            "只有当用户明确要求实际打开、前往、进入、去、去往、跳转到或导航到当前页面中已提供的站内链接时，才调用"
-            " suggest_navigation 并使用该链接的原始路径；候选路径会由服务器验证后执行导航。"
-            "“了解、介绍、有哪些、查看内容”属于信息请求，应直接回答，不得自动跳转。"
+            "当回答与当前页面或本站公开目录中的某个站内页面直接相关，或用户希望打开、前往、进入、跳转或导航时，"
+            "可调用 suggest_navigation 附上最相关的站内链接作为可点击引用。使用链接原始路径；候选路径会由服务器验证。"
+            "该引用不代表已经跳转，不得声称导航已经完成；没有直接相关链接时不要调用。"
             "除此之外，你没有其他工具或操作权限；不得伪造搜索、读取、写入、发送、执行或其他操作"
             "已经完成。"
         ),

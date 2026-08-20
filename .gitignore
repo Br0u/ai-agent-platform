@@ -13,6 +13,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .next/
+.next.nosync/
 out/
 dist/
 coverage/
