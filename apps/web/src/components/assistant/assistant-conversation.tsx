@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 import type { AssistantSession } from "./use-assistant-session";
 import { AssistantActivity } from "./assistant-activity";
 import { AssistantMarkdown } from "./assistant-markdown";
@@ -13,6 +13,7 @@ import {
 import "./assistant-conversation.css";
 
 const FAILURE_MESSAGE = "发送失败，请重试或使用帮助中心或商务咨询。";
+const FOLLOW_LATEST_THRESHOLD = 48;
 
 type AssistantConversationProps = {
   ariaLabel: string;
@@ -29,9 +30,13 @@ export function AssistantConversation({
 }: AssistantConversationProps) {
   const router = useRouter();
   const sending = session.requestStatus === "sending";
-  const currentAssistantMessageId = session.messages.findLast(
+  const currentAssistantMessage = session.messages.findLast(
     (message) => message.role === "assistant",
-  )?.id;
+  );
+  const currentAssistantMessageId = currentAssistantMessage?.id;
+  const messageHistoryRef = useRef<HTMLDivElement>(null);
+  const lastScrolledAssistantMessageId = useRef<number | undefined>(undefined);
+  const followingLatest = useRef(true);
   const hasError = session.validationError !== null;
   const requestFailed = session.requestStatus === "failed";
   const liveAnnouncement =
@@ -40,6 +45,28 @@ export function AssistantConversation({
     (element: HTMLTextAreaElement) => registerComposer(element),
     [registerComposer],
   );
+
+  useLayoutEffect(() => {
+    if (!sending || currentAssistantMessageId === undefined) return;
+    if (lastScrolledAssistantMessageId.current !== currentAssistantMessageId) {
+      lastScrolledAssistantMessageId.current = currentAssistantMessageId;
+      followingLatest.current = true;
+    }
+    const messageHistory = messageHistoryRef.current;
+    if (messageHistory !== null && followingLatest.current) {
+      messageHistory.scrollTop = messageHistory.scrollHeight;
+    }
+  }, [currentAssistantMessage, currentAssistantMessageId, sending]);
+
+  const handleMessageHistoryScroll = useCallback(() => {
+    const messageHistory = messageHistoryRef.current;
+    if (messageHistory === null) return;
+    followingLatest.current =
+      messageHistory.scrollHeight -
+        messageHistory.clientHeight -
+        messageHistory.scrollTop <=
+      FOLLOW_LATEST_THRESHOLD;
+  }, []);
 
   const handlePromptSubmit = ({
     value,
@@ -61,6 +88,8 @@ export function AssistantConversation({
         aria-relevant="additions"
         className="assistant-conversation__messages"
         data-testid="assistant-message-history"
+        onScroll={handleMessageHistoryScroll}
+        ref={messageHistoryRef}
         role="log"
       >
         {session.messages.map((message) => (

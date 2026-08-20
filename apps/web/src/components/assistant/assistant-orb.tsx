@@ -265,7 +265,7 @@ export function AssistantOrb({ size, speed = 1, state }: AssistantOrbProps) {
         <OrbErrorBoundary fallback={<StaticAssistantOrb label={ariaLabel} />}>
           <BrandThinkingOrb
             ariaLabel={ariaLabel}
-            paused={Boolean(prefersReducedMotion)}
+            paused={Boolean(prefersReducedMotion) || state === "completed"}
             size={size}
             speed={speed}
             state={ORB_STATE_BY_ASSISTANT_STATE[state]}

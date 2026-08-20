@@ -417,6 +417,33 @@ describe("FloatingChatWidget", () => {
     await waitFor(() => expect(input).toHaveValue(""));
   });
 
+  it("clears the composer and follows the next turn before the response begins", () => {
+    vi.mocked(fetch).mockReturnValue(new Promise(() => undefined));
+    render(
+      <AssistantExperienceProvider
+        initialServiceState={serviceStates.available}
+        pathname="/"
+      >
+        <FloatingChatWidget />
+      </AssistantExperienceProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "打开码多多" }));
+    const history = screen.getByTestId("assistant-history");
+    Object.defineProperties(history, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 900 },
+    });
+    history.scrollTop = 0;
+    const input = screen.getByRole("textbox", { name: "向码多多提问" });
+
+    fireEvent.change(input, { target: { value: "下一轮问题" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
+
+    expect(input).toHaveValue("");
+    expect(history).toHaveTextContent("下一轮问题");
+    expect(history.scrollTop).toBe(900);
+  });
+
   it("does not steal focus from the composer while the draft changes", () => {
     openWidget();
     const input = screen.getByRole("textbox", { name: "向码多多提问" });
