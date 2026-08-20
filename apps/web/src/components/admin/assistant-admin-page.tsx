@@ -252,7 +252,7 @@ export function AssistantAdminPage({
                 </div>
               ))}
             </dl>
-            <span>只读 · 待接入</span>
+            <span>只读 · 当前运行合同</span>
           </aside>
         </div>
       ) : null}

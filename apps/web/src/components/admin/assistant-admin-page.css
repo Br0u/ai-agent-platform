@@ -917,6 +917,11 @@
   font-weight: 700;
 }
 
+.assistant-model-config__fields small {
+  font-weight: 500;
+  line-height: 1.5;
+}
+
 .assistant-model-config__fields input,
 .assistant-model-config__fields select {
   min-height: 44px;

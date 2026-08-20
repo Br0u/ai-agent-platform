@@ -352,6 +352,9 @@ describe("AssistantModelConfigPanel", () => {
       "true",
     );
     expect(screen.getByLabelText("Model ID")).toBeEnabled();
+    expect(screen.getByLabelText("Model ID")).toHaveAccessibleDescription(
+      "填写供应商或部署方提供的精确 Model ID；系统不会自动发现模型列表。",
+    );
     expect(
       screen.queryByRole("button", { name: /查看/u }),
     ).not.toBeInTheDocument();

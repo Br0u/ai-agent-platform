@@ -32,6 +32,7 @@
 ### Task 1: Validate direct navigation reachability
 
 **Files:**
+
 - Modify: `apps/web/src/server/assistant/agentos-assistant-provider.ts`
 - Test: `apps/web/src/server/assistant/agentos-assistant-provider.test.ts`
 
@@ -58,6 +59,7 @@ Expected: PASS。
 ### Task 2: Enforce one absolute AgentOS stream deadline
 
 **Files:**
+
 - Modify: `apps/web/src/server/assistant/agentos-transport.ts`
 - Test: `apps/web/src/server/assistant/agentos-transport.test.ts`
 
@@ -86,6 +88,7 @@ Expected: PASS。
 ### Task 3: Bound page-context work
 
 **Files:**
+
 - Modify: `apps/web/src/server/assistant/public-page-context.ts`
 - Modify: `apps/web/src/server/assistant/assistant-runtime.ts`
 - Test: `apps/web/src/server/assistant/public-page-context.test.ts`
@@ -114,6 +117,7 @@ Expected: PASS。
 ### Task 4: Remove duplicate site-catalog prompt payload
 
 **Files:**
+
 - Modify: `apps/web/src/server/assistant/agentos-assistant-provider.ts`
 - Test: `apps/web/src/server/assistant/agentos-assistant-provider.test.ts`
 - Test: `apps/web/src/server/assistant/assistant-content-filter.test.ts`
@@ -143,26 +147,27 @@ Expected: PASS。
 ### Task 5: Fix admin copy and model-ID guidance
 
 **Files:**
+
 - Modify: `apps/web/src/components/admin/assistant-admin-page.tsx`
 - Modify: `apps/web/src/components/admin/assistant-model-config-panel.tsx`
 - Test: `apps/web/src/components/admin/assistant-admin-page.test.tsx`
 - Test: `apps/web/src/components/admin/assistant-model-config-panel.test.tsx`
 
-- [ ] **Step 1: Write failing UI tests**
+- [x] **Step 1: Write failing UI tests**
 
 测试只读区显示“当前运行合同”，不再显示“待接入”；Model ID 旁明确说明需要填写供应商或部署方给出的精确 ID，系统不会自动发现列表。
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `node_modules/.bin/vitest run src/components/admin/assistant-admin-page.test.tsx src/components/admin/assistant-model-config-panel.test.tsx`
 
 Expected: FAIL。
 
-- [ ] **Step 3: Change copy only**
+- [x] **Step 3: Change copy only**
 
 不改变表单协议、Provider enum 或后端控制面。
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Run: `node_modules/.bin/vitest run src/components/admin/assistant-admin-page.test.tsx src/components/admin/assistant-model-config-panel.test.tsx`
 
@@ -171,22 +176,23 @@ Expected: PASS。
 ### Task 6: Restore local lint repeatability and current facts
 
 **Files:**
+
 - Modify: `apps/web/eslint.config.mjs`
 - Modify: `docs/design/product-facts.md`
 
-- [ ] **Step 1: Add `.next.nosync/**` to existing global ignores**
+- [x] **Step 1: Ignore the `.next.nosync` development cache**
 
 不引入新脚本，不删除开发缓存。
 
-- [ ] **Step 2: Update project facts**
+- [x] **Step 2: Update project facts**
 
 把“安全占位、无生产模型”的旧状态改为当前单 Agent、动态模型、Skill、无持久化页面记忆事实，并标记自动模型发现等仍为非目标。
 
-- [ ] **Step 3: Verify lint and format**
+- [x] **Step 3: Verify lint and format**
 
 Run: `node_modules/.bin/eslint . --max-warnings=0`
 
-Run: `node_modules/.bin/prettier --check src/server/assistant src/components/admin eslint.config.mjs ../../../docs/design/product-facts.md ../../../docs/superpowers/plans/2026-08-20-agent-hardening-optimization.md`
+Run: `node_modules/.bin/prettier --check src/server/assistant src/components/admin eslint.config.mjs ../../docs/design/product-facts.md ../../docs/superpowers/plans/2026-08-20-agent-hardening-optimization.md`
 
 Expected: PASS。
 

@@ -322,7 +322,7 @@ describe("assistant server runtime", () => {
       let signal: AbortSignal | undefined;
       const fetcher = vi.fn<typeof fetch>(
         async (_input, init) =>
-          await new Promise<Response>((_resolve) => {
+          await new Promise<Response>(() => {
             signal = init?.signal ?? undefined;
           }),
       );

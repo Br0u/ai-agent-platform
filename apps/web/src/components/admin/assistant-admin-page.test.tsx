@@ -413,6 +413,8 @@ describe("AssistantAdminPage", () => {
         "AgentOS 模式会调用已配置模型；占位模式返回安全占位回答。",
       ),
     ).toBeVisible();
+    expect(screen.getByText("只读 · 当前运行合同")).toBeVisible();
+    expect(screen.queryByText("只读 · 待接入")).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("输入助手测试问题")).toBeVisible();
     expect(
       screen.queryByText(/占位测试控制台|不调用真实模型|不会写入会话/iu),

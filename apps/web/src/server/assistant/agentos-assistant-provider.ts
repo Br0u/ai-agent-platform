@@ -42,9 +42,7 @@ for (const entry of [
               {
                 label: item.label,
                 href: item.href,
-                ...(item.description
-                  ? { description: item.description }
-                  : {}),
+                ...(item.description ? { description: item.description } : {}),
               },
             ]
           : [],
