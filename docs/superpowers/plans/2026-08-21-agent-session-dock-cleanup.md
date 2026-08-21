@@ -123,7 +123,7 @@
 
 - Modify: none
 
-- [ ] **Step 1: Confirm the stale container source**
+- [x] **Step 1: Confirm the stale container source**
 
   Run from the main repository root `/Users/brou/Documents/Work/00-ahkzy/AI Agent Platform`:
 
@@ -135,7 +135,7 @@
 
   Expected before recovery: the Agent container references the deleted `assistant-render-performance` worktree and its health check cannot execute `/opt/aap/run-agent-with-secret-env.sh`.
 
-- [ ] **Step 2: Recreate only the Agent-owned development services**
+- [x] **Step 2: Recreate only the Agent-owned development services**
 
   Run from the main repository root `/Users/brou/Documents/Work/00-ahkzy/AI Agent Platform`:
 
@@ -145,7 +145,7 @@
 
   Do not remove volumes, reset databases, or clean unrelated containers.
 
-- [ ] **Step 3: Verify current-root ownership and health**
+- [x] **Step 3: Verify current-root ownership and health**
 
   Run from the main repository root:
 
@@ -163,11 +163,11 @@
 
 - Modify: none unless verification exposes a scoped regression
 
-- [ ] **Step 1: Complete branch-wide spec and code-quality review**
+- [x] **Step 1: Complete branch-wide spec and code-quality review**
 
   Review the full branch against this plan from the feature worktree. Fix every Critical or Important issue and commit any review repair to the feature branch before final verification.
 
-- [ ] **Step 2: Run Web verification**
+- [x] **Step 2: Run Web verification**
 
   Run from the feature worktree root `/Users/brou/Documents/Work/00-ahkzy/AI Agent Platform/.worktrees/agent-cleanup-session-handoff`:
 
@@ -181,7 +181,7 @@
 
   Expected: every command exits zero.
 
-- [ ] **Step 3: Run Agent verification**
+- [x] **Step 3: Run Agent verification**
 
   Run with the current directory set to the feature worktree's `apps/agent`. Use the main checkout's existing virtual-environment executables so the commands do not create another environment; pytest's configured `pythonpath = ["src"]` and the explicit Ruff/mypy paths keep source resolution inside the feature worktree:
 
@@ -193,7 +193,7 @@
 
   Expected: all commands exit zero; skipped tests remain explicitly reported as skipped.
 
-- [ ] **Step 4: Inspect the final diff**
+- [x] **Step 4: Inspect the final diff**
 
   Run from the feature worktree root after all review fixes and tests:
 
