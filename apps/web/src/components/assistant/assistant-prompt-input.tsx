@@ -40,7 +40,7 @@ export type AssistantPromptInputProps = {
   submitLabel?: string;
   validationMessage?: string;
   value: string;
-  variant: "dock" | "quick" | "workspace";
+  variant: "quick" | "workspace";
 };
 
 function codePointLength(value: string): number {

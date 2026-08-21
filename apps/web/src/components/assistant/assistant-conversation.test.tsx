@@ -46,7 +46,6 @@ function renderConversation(
   options: {
     ariaLabel?: string;
     registerComposer?: (element: HTMLElement) => () => void;
-    variant?: "dock" | "workspace";
   } = {},
 ) {
   return render(
@@ -54,7 +53,6 @@ function renderConversation(
       ariaLabel={options.ariaLabel ?? "码多多对话"}
       registerComposer={options.registerComposer ?? (() => () => undefined)}
       session={session}
-      variant={options.variant ?? "dock"}
     />,
   );
 }
@@ -65,6 +63,21 @@ afterEach(() => {
 });
 
 describe("AssistantConversation", () => {
+  it("does not retain the removed surface variant", () => {
+    const removedVariant = `"${["d", "ock"].join("")}"`;
+    for (const filename of [
+      "assistant-conversation.tsx",
+      "assistant-prompt-input.tsx",
+      "assistant-conversation.css",
+    ]) {
+      const source = readFileSync(
+        resolve(process.cwd(), "src/components/assistant", filename),
+        "utf8",
+      );
+      expect(source).not.toContain(removedVariant);
+    }
+  });
+
   it("labels a retained partial answer as incomplete", () => {
     const session = createSession({
       messages: [
@@ -87,7 +100,6 @@ describe("AssistantConversation", () => {
         ariaLabel="测试助手"
         registerComposer={() => () => undefined}
         session={session}
-        variant="workspace"
       />,
     );
 
@@ -109,7 +121,7 @@ describe("AssistantConversation", () => {
       ],
     });
 
-    renderConversation(session, { variant: "workspace" });
+    renderConversation(session);
 
     const log = screen.getByRole("log", { name: "码多多对话" });
     expect(log).toHaveAttribute("data-testid", "assistant-message-history");
@@ -122,10 +134,6 @@ describe("AssistantConversation", () => {
     ).toHaveTextContent("请先查看部署指南。");
     fireEvent.click(within(log).getByRole("button", { name: "部署指南" }));
     expect(router.push).toHaveBeenCalledExactlyOnceWith("/docs/deployment");
-    expect(screen.getByTestId("assistant-conversation")).toHaveAttribute(
-      "data-variant",
-      "workspace",
-    );
   });
 
   it("follows the active stream unless the reader scrolls away", () => {
@@ -169,7 +177,6 @@ describe("AssistantConversation", () => {
           ],
           requestStatus: "sending",
         })}
-        variant="dock"
       />,
     );
 
@@ -199,7 +206,6 @@ describe("AssistantConversation", () => {
           ],
           requestStatus: "sending",
         })}
-        variant="dock"
       />,
     );
 
@@ -230,7 +236,6 @@ describe("AssistantConversation", () => {
           ],
           requestStatus: "sending",
         })}
-        variant="dock"
       />,
     );
     expect(log.scrollTop).toBe(200);
@@ -260,7 +265,6 @@ describe("AssistantConversation", () => {
           ],
           requestStatus: "sending",
         })}
-        variant="dock"
       />,
     );
     expect(log.scrollTop).toBe(1_800);
@@ -282,7 +286,7 @@ describe("AssistantConversation", () => {
       ],
     });
 
-    renderConversation(session, { variant: "workspace" });
+    renderConversation(session);
 
     const log = screen.getByRole("log", { name: "码多多对话" });
     const userMessage = within(log).getByRole("article", { name: "你的消息" });
@@ -396,17 +400,12 @@ describe("AssistantConversation", () => {
         ariaLabel="码多多对话"
         registerComposer={() => () => undefined}
         session={failedSession}
-        variant="dock"
       />,
     );
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("请求过于频繁，请稍后再试。");
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     expect(failedSession.retry).toHaveBeenCalledOnce();
-    expect(screen.getByTestId("assistant-conversation")).toHaveAttribute(
-      "data-variant",
-      "dock",
-    );
   });
 
   it("does not offer retry for a blocked non-retryable request", () => {
@@ -537,7 +536,6 @@ describe("AssistantConversation", () => {
             },
           ],
         })}
-        variant="dock"
       />,
     );
 
@@ -560,7 +558,7 @@ describe("AssistantConversation", () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
-  it("uses explicit dock and workspace layout variants", () => {
+  it("uses the workspace layout", () => {
     const css = readFileSync(
       resolve(
         process.cwd(),
@@ -570,10 +568,7 @@ describe("AssistantConversation", () => {
     );
 
     expect(css).toMatch(
-      /\.assistant-conversation\[data-variant="workspace"\][^{]*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto;/s,
-    );
-    expect(css).toMatch(
-      /\.assistant-conversation\[data-variant="dock"\][^{]*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto;/s,
+      /\.assistant-conversation\s*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto;/s,
     );
   });
 

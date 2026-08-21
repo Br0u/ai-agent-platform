@@ -105,7 +105,6 @@ export function AssistantWorkspace({
             ariaLabel="码多多对话"
             registerComposer={registerComposer}
             session={session}
-            variant="workspace"
           />
           {session.messages.length === 0 ? (
             <div

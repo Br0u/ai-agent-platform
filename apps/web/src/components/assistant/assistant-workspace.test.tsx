@@ -156,10 +156,6 @@ describe("AssistantWorkspace", () => {
       "data-capability",
       "placeholder",
     );
-    expect(screen.getByTestId("assistant-conversation")).toHaveAttribute(
-      "data-variant",
-      "workspace",
-    );
     expect(screen.getByRole("log", { name: "码多多对话" })).toHaveAttribute(
       "data-testid",
       "assistant-message-history",

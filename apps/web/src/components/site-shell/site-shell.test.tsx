@@ -131,6 +131,12 @@ function ComposerProbe() {
   );
 }
 
+function DraftProbe() {
+  const { session } = useAssistantExperience();
+
+  return <output data-testid="assistant-draft-probe">{session.draft}</output>;
+}
+
 function renderAt(pathname: string, children: ReactNode = <p>页面内容</p>) {
   mocks.pathname = pathname;
   window.history.replaceState(null, "", pathname);
@@ -616,6 +622,28 @@ describe("SiteShell", () => {
 
     expect(mocks.push).toHaveBeenCalledWith("/assistant");
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("preserves the quick draft when the header opens the assistant workspace", () => {
+    const view = renderAt("/pricing", <DraftProbe />);
+
+    fireEvent.click(screen.getByRole("button", { name: "打开码多多" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "向码多多提问" }), {
+      target: { value: "帮我比较推理卡" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "打开 AI 助理" }));
+
+    expect(mocks.push).toHaveBeenCalledWith("/assistant");
+    mocks.pathname = "/assistant";
+    window.history.replaceState(null, "", "/assistant");
+    view.rerender(
+      <SiteShell>
+        <DraftProbe />
+      </SiteShell>,
+    );
+    expect(screen.getByTestId("assistant-draft-probe")).toHaveTextContent(
+      "帮我比较推理卡",
+    );
   });
 
   it("gives the assistant workspace a top focus entry without a floating launcher", () => {
