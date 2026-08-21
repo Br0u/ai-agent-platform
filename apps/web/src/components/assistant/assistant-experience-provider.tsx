@@ -246,15 +246,14 @@ export function AssistantExperienceProvider({
   }, []);
 
   useEffect(() => {
-    if (
-      presentation.surface === "closed" ||
-      (!assistantWorkspace && presentationMatchesPath)
-    ) {
+    if (!assistantWorkspace && presentationMatchesPath) {
       return;
     }
-    const version = issueSurfaceVersion();
     pendingExit.current = null;
     lastTrigger.current = null;
+    quickFocusTarget.current = null;
+    if (presentation.surface === "closed") return;
+    const version = issueSurfaceVersion();
     queueMicrotask(() => {
       if (nextSurfaceVersion.current !== version) return;
       commitPresentation({

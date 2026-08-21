@@ -40,8 +40,8 @@ runner 同时运行 `e2e/assistant-experience.spec.ts` 与 `e2e/pricing-assistan
 
 当前生产可达路径是 Header 与 Quick 两个入口进入 `/assistant` workspace，而不是 Dock：
 
-- Header 的键盘操作导航到 `/assistant`，并可将焦点交给 workspace composer；从当前页面进入 workspace 时会有意保留当前助手会话，测试同时确认可见焦点样式。
-- Quick 可打开、关闭、选择预设并显示安全服务状态；从 Quick 展开进入 `/assistant` workspace 时会有意保留当前助手会话。
+- Header 的浏览器 E2E 只验证键盘导航到 `/assistant`、workspace composer 焦点交接和可见焦点样式；当前助手会话的有意保留由 SiteShell 组件集成测试覆盖。
+- Quick 的浏览器 E2E 验证打开、关闭、预设、安全服务状态和展开导航；进入 `/assistant` 时的会话保留由 Quick 组件集成测试覆盖。
 - 草稿和消息只存在于 React 内存：普通 pathname 变化会立即清空；只有 Header 或 Quick 明确交接到 `/assistant` 时保留。
 - `workspace has no conversation rail at any responsive breakpoint` 在 `721px` 与 `720px` 都验证不存在 complementary rail、`CONVERSATIONS` 和“新建会话”。
 - Quick 的三个常见问题必须处于同一横向 chip strip；提交第一条消息后整组隐藏，不占用消息阅读区域。

@@ -19,17 +19,17 @@
 - Modify: `apps/web/src/components/site-shell/site-shell.test.tsx`
 - Modify: `apps/web/src/components/site-shell/site-shell.tsx`
 
-- [ ] **Step 1: Write the failing integration test**
+- [x] **Step 1: Write the failing integration test**
 
   Add a small test-only draft probe backed by `useAssistantExperience`. On `/pricing`, open the real Quick surface, enter a draft through its real textarea, activate the Header assistant entry, rerender the shell at `/assistant`, and assert the provider-backed draft probe still contains the value. Also assert `router.push("/assistant")` was called.
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/site-shell/site-shell.test.tsx`
 
   Expected: the new test fails because the pathname change clears the draft.
 
-- [ ] **Step 3: Implement the minimum fix**
+- [x] **Step 3: Implement the minimum fix**
 
   In the portal branch of `activateHeaderEntry`, call:
 
@@ -40,13 +40,13 @@
 
   Keep the existing Workspace behavior that focuses the composer.
 
-- [ ] **Step 4: Run the test and verify GREEN**
+- [x] **Step 4: Run the test and verify GREEN**
 
   Run: `pnpm --filter @ai-agent-platform/web exec vitest run src/components/site-shell/site-shell.test.tsx`
 
   Expected: all SiteShell tests pass.
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 
   Stage only the two Task 1 files and commit with `fix(web): preserve assistant header handoff`.
 
@@ -60,6 +60,8 @@
 - Modify: `apps/web/src/components/assistant/assistant-conversation.css`
 - Modify: `apps/web/src/components/assistant/assistant-conversation.test.tsx`
 - Modify: `apps/web/src/components/assistant/assistant-prompt-input.tsx`
+- Modify: `apps/web/src/components/assistant/assistant-workspace.tsx`
+- Modify: `apps/web/src/components/assistant/assistant-workspace.test.tsx`
 - Modify: `apps/web/src/components/ui/floating-chat-widget-shadcnui.tsx`
 - Modify: `apps/web/src/components/ui/floating-chat-widget-shadcnui.test.tsx`
 - Modify: `apps/web/src/components/ui/floating-chat-widget-shadcnui.css`

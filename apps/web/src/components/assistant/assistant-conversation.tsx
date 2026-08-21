@@ -19,14 +19,12 @@ type AssistantConversationProps = {
   ariaLabel: string;
   registerComposer: (element: HTMLElement) => () => void;
   session: AssistantSession;
-  variant: "workspace";
 };
 
 export function AssistantConversation({
   ariaLabel,
   registerComposer,
   session,
-  variant,
 }: AssistantConversationProps) {
   const router = useRouter();
   const sending = session.requestStatus === "sending";
@@ -80,7 +78,6 @@ export function AssistantConversation({
     <section
       className="assistant-conversation"
       data-testid="assistant-conversation"
-      data-variant={variant}
     >
       <div
         aria-label={ariaLabel}
@@ -188,7 +185,7 @@ export function AssistantConversation({
               : undefined)
           }
           value={session.draft}
-          variant={variant}
+          variant="workspace"
         />
         {session.requestStatus === "failed" &&
         session.lastFailedMessage !== null ? (

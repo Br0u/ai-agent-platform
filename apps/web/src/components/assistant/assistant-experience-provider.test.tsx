@@ -351,6 +351,35 @@ describe("AssistantExperienceProvider", () => {
     expect(quickFocus).toHaveBeenCalledOnce();
   });
 
+  it("invalidates a pending quick exit after navigating away and back", () => {
+    const view = render(
+      <AssistantExperienceProvider pathname="/pricing">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+    const launcher = screen.getByRole("button", { name: "快速入口" });
+    const focus = vi.spyOn(launcher, "focus");
+
+    fireEvent.click(launcher);
+    fireEvent.change(screen.getByLabelText("待完成助手版本"), {
+      target: { value: screen.getByLabelText("助手实例版本").textContent },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    view.rerender(
+      <AssistantExperienceProvider pathname="/product">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+    view.rerender(
+      <AssistantExperienceProvider pathname="/pricing">
+        <Harness />
+      </AssistantExperienceProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "完成快速退出" }));
+
+    expect(focus).not.toHaveBeenCalled();
+  });
+
   it("carries the quick transcript into the assistant workspace, then clears it after leaving", async () => {
     vi.stubGlobal(
       "fetch",

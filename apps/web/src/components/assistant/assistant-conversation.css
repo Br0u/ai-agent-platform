@@ -1,14 +1,11 @@
 .assistant-conversation {
   display: grid;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
   color: var(--color-ink);
   font-family: var(--font-body);
-}
-
-.assistant-conversation[data-variant="workspace"] {
-  flex: 1 1 auto;
-  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .assistant-conversation button,
@@ -34,12 +31,8 @@
   grid-auto-rows: max-content;
   align-content: start;
   gap: var(--space-3);
-  overflow-y: auto;
-}
-
-.assistant-conversation[data-variant="workspace"]
-  .assistant-conversation__messages {
   margin-top: var(--space-6);
+  overflow-y: auto;
 }
 
 .assistant-conversation__message {
