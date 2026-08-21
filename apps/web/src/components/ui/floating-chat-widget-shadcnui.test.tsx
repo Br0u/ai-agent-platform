@@ -178,36 +178,6 @@ describe("FloatingChatWidget", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("renders the compact panel only for the quick surface", async () => {
-    function SurfaceHarness() {
-      const experience = useAssistantExperience();
-      return (
-        <>
-          <button
-            onClick={(event) => experience.openDockFrom(event.currentTarget)}
-            type="button"
-          >
-            打开停靠助手
-          </button>
-          <FloatingChatWidget />
-        </>
-      );
-    }
-    render(
-      <AssistantExperienceProvider pathname="/">
-        <SurfaceHarness />
-      </AssistantExperienceProvider>,
-    );
-
-    const launcher = screen.getByRole("button", { name: "打开码多多" });
-    fireEvent.click(launcher);
-    expect(screen.getByRole("dialog", { name: "码多多" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "打开停靠助手" }));
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "码多多" })).toBeNull(),
-    );
-  });
-
   it("opens the preserved Chinese chat content without a model selector", () => {
     openWidget();
 

@@ -19,7 +19,7 @@ type AssistantConversationProps = {
   ariaLabel: string;
   registerComposer: (element: HTMLElement) => () => void;
   session: AssistantSession;
-  variant: "dock" | "workspace";
+  variant: "workspace";
 };
 
 export function AssistantConversation({

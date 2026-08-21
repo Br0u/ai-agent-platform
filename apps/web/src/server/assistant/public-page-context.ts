@@ -54,7 +54,6 @@ const REMOVED_CONTENT_SELECTOR = [
   "[data-assistant-background-root]",
   '[data-testid^="assistant-"]',
   ".assistant-workspace",
-  ".assistant-dock",
   ".assistant-conversation",
   ".floating-assistant",
 ].join(",");

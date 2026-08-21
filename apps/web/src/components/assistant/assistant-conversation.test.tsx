@@ -46,7 +46,7 @@ function renderConversation(
   options: {
     ariaLabel?: string;
     registerComposer?: (element: HTMLElement) => () => void;
-    variant?: "dock" | "workspace";
+    variant?: "workspace";
   } = {},
 ) {
   return render(
@@ -54,7 +54,7 @@ function renderConversation(
       ariaLabel={options.ariaLabel ?? "码多多对话"}
       registerComposer={options.registerComposer ?? (() => () => undefined)}
       session={session}
-      variant={options.variant ?? "dock"}
+      variant={options.variant ?? "workspace"}
     />,
   );
 }
@@ -65,6 +65,21 @@ afterEach(() => {
 });
 
 describe("AssistantConversation", () => {
+  it("does not retain the removed surface variant", () => {
+    const removedVariant = `"${["d", "ock"].join("")}"`;
+    for (const filename of [
+      "assistant-conversation.tsx",
+      "assistant-prompt-input.tsx",
+      "assistant-conversation.css",
+    ]) {
+      const source = readFileSync(
+        resolve(process.cwd(), "src/components/assistant", filename),
+        "utf8",
+      );
+      expect(source).not.toContain(removedVariant);
+    }
+  });
+
   it("labels a retained partial answer as incomplete", () => {
     const session = createSession({
       messages: [
@@ -169,7 +184,7 @@ describe("AssistantConversation", () => {
           ],
           requestStatus: "sending",
         })}
-        variant="dock"
+        variant="workspace"
       />,
     );
 
@@ -199,7 +214,7 @@ describe("AssistantConversation", () => {
           ],
           requestStatus: "sending",
         })}
-        variant="dock"
+        variant="workspace"
       />,
     );
 
@@ -230,7 +245,7 @@ describe("AssistantConversation", () => {
           ],
           requestStatus: "sending",
         })}
-        variant="dock"
+        variant="workspace"
       />,
     );
     expect(log.scrollTop).toBe(200);
@@ -260,7 +275,7 @@ describe("AssistantConversation", () => {
           ],
           requestStatus: "sending",
         })}
-        variant="dock"
+        variant="workspace"
       />,
     );
     expect(log.scrollTop).toBe(1_800);
@@ -396,7 +411,7 @@ describe("AssistantConversation", () => {
         ariaLabel="码多多对话"
         registerComposer={() => () => undefined}
         session={failedSession}
-        variant="dock"
+        variant="workspace"
       />,
     );
     const alert = screen.getByRole("alert");
@@ -405,7 +420,7 @@ describe("AssistantConversation", () => {
     expect(failedSession.retry).toHaveBeenCalledOnce();
     expect(screen.getByTestId("assistant-conversation")).toHaveAttribute(
       "data-variant",
-      "dock",
+      "workspace",
     );
   });
 
@@ -537,7 +552,7 @@ describe("AssistantConversation", () => {
             },
           ],
         })}
-        variant="dock"
+        variant="workspace"
       />,
     );
 
@@ -560,7 +575,7 @@ describe("AssistantConversation", () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
-  it("uses explicit dock and workspace layout variants", () => {
+  it("uses the explicit workspace layout variant", () => {
     const css = readFileSync(
       resolve(
         process.cwd(),
@@ -571,9 +586,6 @@ describe("AssistantConversation", () => {
 
     expect(css).toMatch(
       /\.assistant-conversation\[data-variant="workspace"\][^{]*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto;/s,
-    );
-    expect(css).toMatch(
-      /\.assistant-conversation\[data-variant="dock"\][^{]*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto;/s,
     );
   });
 

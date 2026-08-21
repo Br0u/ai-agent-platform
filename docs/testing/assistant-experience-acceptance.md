@@ -40,9 +40,9 @@ runner 同时运行 `e2e/assistant-experience.spec.ts` 与 `e2e/pricing-assistan
 
 当前生产可达路径是 Header 与 Quick 两个入口进入 `/assistant` workspace，而不是 Dock：
 
-- Header 的键盘操作导航到 `/assistant`，并可将焦点交给 workspace composer；测试同时确认可见焦点样式。
-- Quick 可打开、关闭、选择预设并显示安全服务状态；从 Quick 展开后进入 `/assistant` workspace。
-- `workspace clears the current-page conversation` 验证草稿和消息只存在于当前 pathname 的 React 内存；跳转进入 workspace 或刷新后立即清空。
+- Header 的键盘操作导航到 `/assistant`，并可将焦点交给 workspace composer；从当前页面进入 workspace 时会有意保留当前助手会话，测试同时确认可见焦点样式。
+- Quick 可打开、关闭、选择预设并显示安全服务状态；从 Quick 展开进入 `/assistant` workspace 时会有意保留当前助手会话。
+- 草稿和消息只存在于 React 内存：普通 pathname 变化会立即清空；只有 Header 或 Quick 明确交接到 `/assistant` 时保留。
 - `workspace has no conversation rail at any responsive breakpoint` 在 `721px` 与 `720px` 都验证不存在 complementary rail、`CONVERSATIONS` 和“新建会话”。
 - Quick 的三个常见问题必须处于同一横向 chip strip；提交第一条消息后整组隐藏，不占用消息阅读区域。
 - V2 stream 的当前 activity 在工作中以唯一 `aria-live` 状态展示，完成后转为默认收起的原生 `details` 审计轨迹；Markdown 链接只显示文字，导航只能通过明确的 action button 点击触发。
@@ -54,7 +54,7 @@ runner 同时运行 `e2e/assistant-experience.spec.ts` 与 `e2e/pricing-assistan
 
 ## 诚实边界
 
-`AssistantDock` 当前不是生产可达路径。因此本 runner 不声明覆盖 Dock 拖拽、宽度持久化、遮罩、Escape 关闭、separator 断点、移动全屏或 `localStorage` 宽度恢复。`AssistantDock` 及 `useAssistantDockSize` 仍有组件/Hook 单测，但这些不是本 runner 的端到端证据。
+Dock 实现已经移除，因此本 runner 不声明覆盖拖拽、宽度持久化、遮罩、separator 断点、移动全屏或 `localStorage` 宽度恢复。
 
 同样，本 runner 的通过只表示本机隔离 Compose 环境中的 Experience 验收通过；不表示 GitHub 或其他远端 CI 已通过。assistant-runtime 的动态模型、重建与恢复由独立 runtime runner 验证，不记入本文件的 Experience 计数。
 

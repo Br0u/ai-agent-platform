@@ -46,10 +46,6 @@
   pointer-events: none;
 }
 
-.floating-assistant__panel.is-blocked {
-  pointer-events: none;
-}
-
 .floating-assistant__header {
   position: relative;
   display: flex;
