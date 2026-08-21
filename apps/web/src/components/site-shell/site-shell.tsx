@@ -327,6 +327,7 @@ function AssistantEnabledShell({
       return;
     }
     void trigger;
+    experience.session.preserveOnNextPathnameChange("/assistant");
     router.push("/assistant");
   };
 
